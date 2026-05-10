@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="meld">
+
+  <enum id="org.gnome.meld.mergefileorder">
+    <value nick="local-merge-remote" value="0"/>
+    <value nick="remote-merge-local" value="1"/>
+  </enum>
+
+  <enum id="org.gnome.meld.overviewmapstyle">
+    <value nick="chunkmap" value="0"/>
+    <value nick="compact-sourcemap" value="1"/>
+    <value nick="full-sourcemap" value="2"/>
+  </enum>
+
+  <enum id="org.gnome.meld.wrapmode">
+    <value nick="none" value="0"/>
+    <value nick="char" value="1"/>
+    <value nick="word" value="2"/>
+    <value nick="word-char" value="3"/>
+  </enum>
+
+  <flags id="org.gnome.meld.spacesflags">
+    <value nick="space" value="1"/>
+    <value nick="tab" value="2"/>
+    <value nick="newline" value="4"/>
+    <value nick="nbsp" value="8"/>
+    <value nick="leading" value="16"/>
+    <value nick="text" value="32"/>
+    <value nick="trailing" value="64"/>
+  </flags>
+
+  <schema id="org.gnome.meld.WindowState" path="/org/gnome/meld/window-state/">
+      <!-- Saved window state -->
+
+      <key name="width" type="i">
+          <default>-1</default>
+          <summary>Default window width</summary>
+      </key>
+      <key name="height" type="i">
+          <default>-1</default>
+          <summary>Default window height</summary>
+      </key>
+      <key name="is-maximized" type="b">
+          <default>false</default>
+          <summary>Default window maximised state</summary>
+      </key>
+      <key name="is-fullscreen" type="b">
+          <default>false</default>
+          <summary>Default window fullscreen state</summary>
+      </key>
+  </schema>
+
+  <schema id="org.gnome.meld" path="/org/gnome/meld/">
+
+      <!-- GtkSettings overrides -->
+      <key name="prefer-dark-theme" type="b">
+          <default>false</default>
+          <summary>Prefer application-wide dark theme</summary>
+          <description>If true, the GTK dark theme variant will be used, if available. Note that this is separate from the syntax highlighting scheme.</description>
+      </key>
+
+      <!-- File loading settings -->
+      <key name="detect-encodings" type="as">
+          <default>[]</default>
+          <summary>Additional automatically detected text encodings</summary>
+          <description>Meld will use these text encodings to try to decode loaded text files before trying any other encodings. In addition to the encodings in this list, UTF-8 and the current locale-default encoding will always be used; other encodings may also be tried, depending on the user’s locale.</description>
+      </key>
+
+
+      <!-- Settings corresponding directly to GtkTextView/GtkSourceView properties -->
+      <key name="indent-width" type="i">
+          <default>8</default>
+          <summary>Width of an indentation step</summary>
+          <description>The number of spaces to use for a single indent step</description>
+      </key>
+      <key name="insert-spaces-instead-of-tabs" type="b">
+          <default>false</default>
+          <summary>Whether to indent using spaces or tabs</summary>
+          <description>If true, any new indentation will use spaces instead of tabs.</description>
+      </key>
+      <key name="show-line-numbers" type="b">
+          <default>false</default>
+          <summary>Show line numbers</summary>
+          <description>If true, line numbers will be shown in the gutter of file comparisons.</description>
+      </key>
+      <key name="highlight-syntax" type='b'>
+          <default>false</default>
+          <summary>Highlight syntax</summary>
+          <description>Whether to highlight syntax in comparisons. Because of Meld’s own color highlighting, this is off by default.</description>
+      </key>
+      <key name="style-scheme" type="s">
+          <default>"classic"</default>
+          <summary>Color scheme to use for syntax highlighting</summary>
+          <description>Used by GtkSourceView to determine colors for syntax highlighting</description>
+      </key>
+      <key name="enable-space-drawer" type='b'>
+          <default>false</default>
+          <summary>Draw whitespace</summary>
+          <description>If true, whitespace characters will be drawn in comparisons even if they are not in a changed area.</description>
+      </key>
+      <key name="wrap-mode" enum='org.gnome.meld.wrapmode'>
+          <aliases>
+            <alias value='GTK_WRAP_NONE' target='none'/>
+            <alias value='GTK_WRAP_CHAR' target='char'/>
+            <alias value='GTK_WRAP_WORD' target='word'/>
+          </aliases>
+          <default>'none'</default>
+          <summary>Wrap mode</summary>
+          <description>Lines in file comparisons will be wrapped according to this setting, either not at all ('none'), at any character ('char') or only at the end of words ('word').</description>
+      </key>
+
+
+      <!-- Non-GtkSourceView editor properties -->
+      <key name="highlight-current-line" type="b">
+          <default>false</default>
+          <summary>Highlight current line</summary>
+          <description>If true, the line containing the cursor will be highlighted in file comparisons.</description>
+      </key>
+      <key name="use-system-font" type="b">
+          <default>true</default>
+          <summary>Use the system default monospace font</summary>
+          <description>If false, custom-font will be used instead of the system monospace font.</description>
+      </key>
+      <key name="custom-font" type="s">
+          <default>"monospace, 14"</default>
+          <summary>Custom font</summary>
+          <description>The custom font to use, stored as a string and parsed as a Pango font description.</description>
+      </key>
+
+      <!-- Overview map properties -->
+      <key name="show-overview-map" type="b">
+          <default>true</default>
+          <summary>Show overview source map</summary>
+          <description>If true, file comparisons will have paired source maps for compared files.</description>
+      </key>
+
+      <key name="overview-map-style" enum="org.gnome.meld.overviewmapstyle">
+          <default>"chunkmap"</default>
+          <summary>Style of overview map</summary>
+          <description>Style options for how the overview map is displayed.</description>
+      </key>
+
+      <!-- File comparison settings -->
+      <key name="ignore-blank-lines" type="b">
+          <default>false</default>
+          <summary>Ignore blank lines when comparing files</summary>
+          <description>If true, blank lines will be trimmed when highlighting changes between files.</description>
+      </key>
+
+
+      <!-- External helper properties -->
+      <key name="use-system-editor" type="b">
+          <default>true</default>
+          <summary>Use the system default editor</summary>
+          <description>If false, custom-editor-command will be used instead of the system editor when opening files externally.</description>
+      </key>
+      <key name="custom-editor-command" type="s">
+          <default>""</default>
+          <summary>The custom editor launch command</summary>
+          <description>The command used to launch a custom editor. Some limited templating is supported here; at the moment '{file}' and '{line}' are recognised tokens.</description>
+      </key>
+
+      <!-- Folder comparison properties -->
+      <key name="folder-columns" type="a(sb)">
+          <default>[("size", true), ("modification time", true), ("permissions", false)]</default>
+          <summary>Columns to display</summary>
+          <description>List of column names in folder comparison and whether they should be displayed.</description>
+      </key>
+      <key name="folder-ignore-symlinks" type="b">
+          <default>false</default>
+          <summary>Ignore symbolic links</summary>
+          <description>If true, folder comparisons do not follow symbolic links when traversing the folder tree.</description>
+      </key>
+      <key name="folder-shallow-comparison" type="b">
+          <default>false</default>
+          <summary>Use shallow comparison</summary>
+          <description>If true, folder comparisons compare files based solely on size and mtime, considering files to be identical if their size and mtime match, and different otherwise.</description>
+      </key>
+      <key name="folder-time-resolution" type="i">
+          <default>100</default>
+          <summary>File timestamp resolution</summary>
+          <description>When comparing based on mtime, this is the minimum difference in nanoseconds between two files before they’re considered to have different mtimes. This is useful when comparing files between filesystems with different timestamp resolution.</description>
+      </key>
+      <key name="folder-filter-text" type="b">
+          <default>true</default>
+          <summary>Apply text filters during folder comparisons</summary>
+          <description>If true, folder comparisons that compare file contents also apply active text filters and the blank line trimming option, and ignore newline differences.</description>
+      </key>
+      <key name="folder-status-filters" type="as">
+          <default>['normal', 'modified', 'new']</default>
+          <summary>File status filters</summary>
+          <description>List of statuses used to filter visible files in folder comparison.</description>
+      </key>
+
+      <!-- Version control properties -->
+      <key name="vc-console-visible" type="b">
+          <default>false</default>
+          <summary>Show the version control console output</summary>
+          <description>If true, a console output section will be shown in version control views, showing the commands run for version control operations.</description>
+      </key>
+      <key name="vc-console-pane-position" type="i">
+          <default>300</default>
+          <summary>Version control pane position</summary>
+          <description>This is the height of the main version control tree when the console pane is shown.</description>
+      </key>
+      <key name="vc-left-is-local" type="b">
+          <default>false</default>
+          <summary>Present version comparisons as left-local/right-remote</summary>
+          <description>If true, version control comparisons will use a left-is-local, right-is-remote scheme to determine what order to present files in panes. Otherwise, a left-is-theirs, right-is-mine scheme is used.</description>
+      </key>
+      <key name="vc-merge-file-order" enum="org.gnome.meld.mergefileorder">
+          <default>"remote-merge-local"</default>
+          <summary>Order for files in three-way version control merge comparisons</summary>
+          <description>Choices for file order are remote/merged/local and local/merged/remote. This preference only affects three-way comparisons launched from the version control view, so is used solely for merges/conflict resolution within Meld.</description>
+      </key>
+      <key name="vc-show-commit-margin" type="b">
+          <default>true</default>
+          <summary>Show margin in commit message editor</summary>
+          <description>If true, a guide will be displayed to show what column the margin is at in the version control commit message editor.</description>
+      </key>
+      <key name="vc-commit-margin" type="i">
+          <default>72</default>
+          <summary>Margin column in commit message editor</summary>
+          <description>The column at which to show the margin in the version control commit message editor.</description>
+      </key>
+      <key name="vc-break-commit-message" type="b">
+          <default>false</default>
+          <summary>Automatically hard-wrap commit messages</summary>
+          <description>If true, the version control commit message editor will hard-wrap (i.e., insert line breaks) at the commit margin before commit.</description>
+      </key>
+      <key name="vc-status-filters" type="as">
+          <default>['flatten', 'modified']</default>
+          <summary>Version control status filters</summary>
+          <description>List of statuses used to filter visible files in version control comparison.</description>
+      </key>
+
+      <!-- Filters -->
+      <key name="filename-filters" type="a(sbs)">
+          <default>
+            [
+              ("Backups", true, "#*# .#* ~* *~ *.{orig,bak,swp}"),
+              ("OS-specific metadata", true, ".DS_Store ._* .Spotlight-V100 .Trashes Thumbs.db Desktop.ini"),
+              ("Version Control", true, "_MTN .bzr .svn .svn .hg .fslckout _FOSSIL_ .fos CVS _darcs .git .svn .osc"),
+              ("Binaries", true, "*.{pyc,a,obj,o,so,la,lib,dll,exe}"),
+              ("Media", false, "*.{jpg,gif,png,bmp,wav,mp3,ogg,flac,avi,mpg,xcf,xpm}")
+            ]
+          </default>
+          <summary>Filename-based filters</summary>
+          <description>List of predefined filename-based filters that, if active, will remove matching files from a folder comparison.</description>
+      </key>
+      <key name="text-filters" type="a(sbs)">
+          <default>
+            [
+              ("CVS/SVN keywords", false, "\\$\\w+(:[^\\n$]+)?\\$"),
+              ("C++ comment", false, "//.*"),
+              ("C comment", false, "/\\*.*?\\*/"),
+              ("All whitespace", false, "[ \\t\\r\\f\\v]*"),
+              ("Leading whitespace", false, "^[ \\t\\r\\f\\v]*"),
+              ("Trailing whitespace", false, "[ \\t\\r\\f\\v]*$"),
+              ("Script comment", false, "#.*")
+            ]
+          </default>
+          <summary>Text-based filters</summary>
+          <description>List of predefined text-based regex filters that, if active, will remove text from being used in a file comparison. The text will still be displayed, but won’t contribute to the comparison itself.</description>
+      </key>
+  </schema>
+</schemalist>

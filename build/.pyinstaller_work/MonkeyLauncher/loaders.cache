@@ -1,0 +1,12 @@
+"@executable_path/lib/gdk-pixbuf/loaders/libopenraw_pixbuf.so"
+"Digital camera RAW" 0 "gdk-pixbuf" "Digital camera RAW images loader." "LGPL"
+"image/x-adobe-dng" "image/x-canon-cr2" "image/x-canon-crw" "image/x-nikon-nef" "image/x-olympus-orf" "image/x-pentax-pef" "image/x-sony-arw" "image/x-epson-erf" "image/x-minolta-mrw" "image/x-fuji-raf" ""
+"dng" "cr2" "crw" "nef" "orf" "pef" "arw" "erf" "mrw" "raf" ""
+"MM *" "  z " 80
+"II* \020   CR\002 " "   z zzz   z" 100
+"II* " "   z" 80
+"IIRO" "    " 100
+" MRM" "z   " 100
+"II\032   HEAPCCDR" "   zzz        " 100
+"FUJIFILMCCD-RAW " "                " 100
+
