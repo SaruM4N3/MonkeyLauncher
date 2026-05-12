@@ -10,6 +10,12 @@ RUN apt-get update && apt-get install -y \
     gir1.2-gtk-3.0 \
     libgtk-3-0 \
     libgtk-3-dev \
+    fonts-dejavu-core \
+    fonts-liberation \
+    fonts-noto-core \
+    fonts-noto-mono \
+    fontconfig \
+    && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir pyinstaller

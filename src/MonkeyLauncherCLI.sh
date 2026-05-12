@@ -21,7 +21,7 @@ if [ ! -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; then
   echo "Steam app 480 (Spacewar) is not installed — it is required for the Proton prefix." >&2
   read -r -p "Open Steam to install it now? [Y/n] " ans
   if [[ "$ans" != [nN] ]]; then
-    xdg-open "steam://install/480"
+    steam "steam://install/480"
   fi
   exit 1
 fi

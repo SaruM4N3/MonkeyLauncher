@@ -63,9 +63,9 @@ install_pkg() {
   case "$PKG_MGR" in
     pacman)
       if [ -n "$AUR_HELPER" ]; then
-        $AUR_HELPER -S --noconfirm "$pacman"
+        $AUR_HELPER -S --noconfirm --needed --overwrite '*' $pacman
       else
-        sudo pacman -S --noconfirm "$pacman"
+        sudo pacman -S --noconfirm --needed --overwrite '*' $pacman
       fi ;;
     apt)    sudo apt-get install -y "$apt"    ;;
     dnf)    sudo dnf install -y    "$dnf"    ;;
@@ -132,6 +132,42 @@ else
   python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk" \
     && ok "python3-gi + GTK3 runtime" \
     || fail "Failed to install GTK3 bindings"
+fi
+
+# Verify GObject typelibs are present (needed at runtime by the PyInstaller binary)
+if ! python3 -c "
+import gi, sys
+for mod, ver in [('Gtk','3.0'),('Gdk','3.0'),('Pango','1.0'),('GLib','2.0')]:
+    try:
+        gi.require_version(mod, ver)
+        __import__('gi.repository.' + mod)
+    except Exception as e:
+        print(f'Missing typelib: {mod}-{ver} ({e})', file=sys.stderr)
+        sys.exit(1)
+" 2>/dev/null; then
+  warn "GObject typelibs incomplete — installing…"
+  install_pkg "gobject-introspection gtk3" \
+              "gir1.2-gtk-3.0 gir1.2-gdk-3.0 gir1.2-pango-1.0" \
+              "gobject-introspection gtk3" \
+              "typelib-1_0-Gtk-3_0 typelib-1_0-Pango-1_0"
+  ok "GObject typelibs installed"
+else
+  ok "GObject typelibs (Gtk, Gdk, Pango, GLib)"
+fi
+
+# ── Fonts ─────────────────────────────────────────────────────────────────────
+section "Checking fonts…"
+
+if command -v fc-list &>/dev/null && fc-list : family 2>/dev/null | grep -qi "dejavu\|liberation\|noto"; then
+  ok "GTK fonts (DejaVu / Liberation / Noto already present)"
+else
+  warn "Core GTK fonts not found — installing…"
+  install_pkg "ttf-dejavu noto-fonts" \
+              "fonts-dejavu-core fonts-liberation fonts-noto-core fontconfig" \
+              "dejavu-fonts-all liberation-fonts google-noto-fonts-common" \
+              "dejavu-fonts liberation-fonts google-noto-fonts"
+  command -v fc-cache &>/dev/null && fc-cache -f
+  ok "fonts installed"
 fi
 
 # ── Build tools ────────────────────────────────────────────────────────────────

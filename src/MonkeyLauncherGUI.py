@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
 
+import os
+import sys
+
+# When bundled by PyInstaller the typelibs are packed alongside the binary;
+# point GI to them before the first require_version call.
+if getattr(sys, 'frozen', False):
+    _bundle = sys._MEIPASS
+    _typelibs = os.path.join(_bundle, 'gi_typelibs')
+    if os.path.isdir(_typelibs):
+        os.environ['GI_TYPELIB_PATH'] = _typelibs
+
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib, Pango, Gdk
 
-import os
 import re
 import shutil
 import subprocess
@@ -615,7 +625,7 @@ def run_startup_checks(parent=None):
             "Open Steam to install it now?")
         response = d.run(); d.destroy()
         if response == Gtk.ResponseType.YES:
-            subprocess.Popen(['xdg-open', 'steam://install/480'])
+            subprocess.Popen(['steam', 'steam://install/480'])
         return False
 
     return True
