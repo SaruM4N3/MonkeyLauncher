@@ -125,3 +125,14 @@ install.sh
 uninstall.sh
 build-release.sh
 ```
+---
+
+## Disclaimer
+
+This project was created by a student for educational and research purposes only.
+
+MonkeyLauncher does not provide, distribute, host, or include any copyrighted game files, cracks, or bypass tools. Users are responsible for ensuring they legally own any games they run with this software and for complying with the laws and terms of service applicable in their country.
+
+The project is intended to study Linux compatibility, Proton/Wine behavior, launcher development, and related technologies.
+
+---
