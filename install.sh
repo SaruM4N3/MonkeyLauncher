@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-RESOURCES="$(cd "$(dirname "$0")/.resources" && pwd)"
+RESOURCES="$(cd "$(dirname "$0")/src" && pwd)"
 INSTALL_BIN="$HOME/.local/bin"
 INSTALL_DESKTOP="$HOME/.local/share/applications"
-BUILD_DIR="$(dirname "$0")/build"
+BUILD_DIR="$(cd "$(dirname "$0")" && pwd)/dist"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -137,20 +137,6 @@ fi
 # ── Build tools ────────────────────────────────────────────────────────────────
 section "Checking build tools…"
 
-# shc: in AUR on Arch; may not be in official repos elsewhere
-if command -v shc &>/dev/null; then
-  ok "shc"
-elif [ "$PKG_MGR" = "pacman" ]; then
-  warn "shc not found — installing…"
-  install_pkg shc shc shc shc
-  command -v shc &>/dev/null && ok "shc" || fail "Failed to install shc"
-else
-  warn "shc may not be in your distro's repos — trying anyway…"
-  install_pkg shc shc shc shc
-  command -v shc &>/dev/null && ok "shc" \
-    || fail "shc not found. Install it manually: https://github.com/neurobin/shc"
-fi
-
 if command -v pyinstaller &>/dev/null; then
   ok "pyinstaller"
   PYINSTALLER="pyinstaller"
@@ -189,10 +175,9 @@ $PYINSTALLER \
   && ok "GUI compiled" \
   || fail "PyInstaller failed — see $BUILD_DIR/pyinstaller.log"
 
-echo "  CLI (shc)…"
-shc -f "$RESOURCES/MonkeyLauncherCLI.sh" -o "$BUILD_DIR/MonkeyLauncherCLI" 2>/dev/null \
-  && ok "CLI compiled" \
-  || fail "shc failed"
+echo "  CLI…"
+install -m 755 "$RESOURCES/MonkeyLauncherCLI.sh" "$BUILD_DIR/MonkeyLauncherCLI"
+ok "CLI ready"
 
 # ── Install binaries ───────────────────────────────────────────────────────────
 section "Installing binaries…"

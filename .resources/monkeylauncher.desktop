@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=MonkeyLauncher
-Comment=Wine/Proton game launcher
-Exec=MonkeyLauncher
-Icon=applications-games
-Type=Application
-Categories=Game;
-Terminal=false
