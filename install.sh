@@ -91,10 +91,30 @@ section "Checking runtime dependencies…"
 #                        cmd         pacman        apt                  dnf              zypper
 check_or_install         fzf         fzf           fzf                  fzf              fzf
 check_or_install         winetricks  winetricks    winetricks           winetricks       winetricks
-check_or_install         mangohud    mangohud      mangohud             mangohud         mangohud
 check_or_install         xdg-open    xdg-utils     xdg-utils            xdg-utils        xdg-utils
 check_or_install         pgrep       procps-ng     procps               procps-ng        procps
-check_or_install         umu-run     umu-launcher  umu-launcher         umu-launcher     umu-launcher
+
+# mangohud: not in official apt/dnf repos — warn on non-Arch
+if command -v mangohud &>/dev/null; then
+  ok "mangohud"
+elif [ "$PKG_MGR" = "pacman" ]; then
+  warn "mangohud not found — installing…"
+  install_pkg mangohud mangohud mangohud mangohud
+  command -v mangohud &>/dev/null && ok "mangohud" || fail "Failed to install mangohud"
+else
+  warn "mangohud not in official repos for your distro — install it manually (https://github.com/flightlessmango/MangoHud) then re-run."
+fi
+
+# umu-launcher: AUR on Arch, unofficial on other distros
+if command -v umu-run &>/dev/null; then
+  ok "umu-run"
+elif [ "$PKG_MGR" = "pacman" ]; then
+  warn "umu-launcher not found — installing…"
+  install_pkg umu-launcher umu-launcher umu-launcher umu-launcher
+  command -v umu-run &>/dev/null && ok "umu-run" || fail "Failed to install umu-launcher"
+else
+  warn "umu-launcher is not in official repos for your distro — install it manually (https://github.com/Open-Wine-Components/umu-launcher) then re-run."
+fi
 
 # ── Python & GTK3 ─────────────────────────────────────────────────────────────
 section "Checking Python / GTK3…"
@@ -117,7 +137,19 @@ fi
 # ── Build tools ────────────────────────────────────────────────────────────────
 section "Checking build tools…"
 
-check_or_install shc shc shc shc shc
+# shc: in AUR on Arch; may not be in official repos elsewhere
+if command -v shc &>/dev/null; then
+  ok "shc"
+elif [ "$PKG_MGR" = "pacman" ]; then
+  warn "shc not found — installing…"
+  install_pkg shc shc shc shc
+  command -v shc &>/dev/null && ok "shc" || fail "Failed to install shc"
+else
+  warn "shc may not be in your distro's repos — trying anyway…"
+  install_pkg shc shc shc shc
+  command -v shc &>/dev/null && ok "shc" \
+    || fail "shc not found. Install it manually: https://github.com/neurobin/shc"
+fi
 
 if command -v pyinstaller &>/dev/null; then
   ok "pyinstaller"
@@ -147,6 +179,11 @@ $PYINSTALLER \
   --specpath "$BUILD_DIR/.pyinstaller_spec" \
   --noconfirm \
   --clean \
+  --hidden-import gi \
+  --hidden-import gi.repository.Gtk \
+  --hidden-import gi.repository.GLib \
+  --hidden-import gi.repository.Pango \
+  --hidden-import gi.repository.Gdk \
   "$RESOURCES/MonkeyLauncherGUI.py" \
   > "$BUILD_DIR/pyinstaller.log" 2>&1 \
   && ok "GUI compiled" \
@@ -229,9 +266,27 @@ add_alias_to() {
   fi
 }
 
+add_alias_to_fish() {
+  local rc="$HOME/.config/fish/config.fish"
+  [ -f "$rc" ] || return 0
+  if ! grep -q 'local/bin' "$rc"; then
+    echo "" >> "$rc"
+    echo 'fish_add_path "$HOME/.local/bin"' >> "$rc"
+    ok "PATH updated in $rc"
+  fi
+  if grep -q "alias MonkeyLauncher" "$rc"; then
+    ok "Alias already present in $rc"
+  else
+    echo "" >> "$rc"
+    echo "# MonkeyLauncher CLI" >> "$rc"
+    echo "alias MonkeyLauncher='$INSTALL_BIN/MonkeyLauncherCLI'" >> "$rc"
+    ok "Alias added to $rc"
+  fi
+}
+
 add_alias_to "$HOME/.bashrc"
 add_alias_to "$HOME/.zshrc"
-add_alias_to "$HOME/.config/fish/config.fish" 2>/dev/null || true
+add_alias_to_fish
 
 info "Run 'source ~/.bashrc' (or ~/.zshrc) to activate the alias in the current session."
 
