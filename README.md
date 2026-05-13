@@ -1,18 +1,43 @@
 # MonkeyLauncher
 
+![Platform](https://img.shields.io/badge/Platform-Linux-orange)
+![Python](https://img.shields.io/badge/Python-3.x-blue)
+![License](https://img.shields.io/badge/License-Educational-green)
+
 A launcher for online-fix Windows games on Linux, built on top of [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) and Proton.
 
 Available as a **GTK3 GUI** and a **terminal CLI** (fzf-based).
 
 ---
 
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Usage](#usage)
+- [Config](#config)
+- [Build](#build)
+- [Project Structure](#project-structure)
+- [Disclaimer](#disclaimer)
+
+---
+
 ## Features
+
+<summary><b>Game Management</b></summary>
 
 - Scans a game directory for `.exe` files and lets you pick one to launch
 - Auto-detects all Proton versions installed across your Steam libraries
 - Save a favorite Proton version to skip the prompt on every launch
 - Per-game launch environment variables (e.g. `DRI_PRIME=1 GAMEMODE=1`)
-- Save directory management — saves are symlinked out of the Proton prefix into `~/.config/MonkeyLauncher/saves/` so they survive prefix resets
+
+<summary><b>Save Management</b></summary>
+
+Save directory management — saves are symlinked out of the Proton prefix into `~/.config/MonkeyLauncher/saves/` so they survive prefix resets
+
+<summary><b>Additional Features</b></summary>
+
 - MangoHud overlay toggle (GUI button / CLI `-d` flag)
 - Install winetricks packages (vcrun, dotnet, DirectX, OpenAL…) or run a local `.exe` installer into any Proton prefix
 - Pre-configured `WINEDLLOVERRIDES` for online-fix compatibility
@@ -21,6 +46,8 @@ Available as a **GTK3 GUI** and a **terminal CLI** (fzf-based).
 
 ## Requirements
 
+<summary><b>Required Dependencies</b></summary>
+
 | Dependency | Purpose |
 |---|---|
 | Steam (running) | Required for the Proton prefix |
@@ -28,8 +55,15 @@ Available as a **GTK3 GUI** and a **terminal CLI** (fzf-based).
 | [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) | Runs the game through Proton |
 | winetricks | Dependency installation |
 | fzf | CLI interface |
+
+<summary><b>Optional Dependencies</b></summary>
+
+| Dependency | Purpose |
+|---|---|
 | python3-gobject + GTK3 | GUI only |
 | mangohud | Optional overlay |
+
+<summary><b>Installation Notes</b></summary>
 
 > On Arch Linux all of the above are available via pacman/AUR. On other distros,
 > `umu-launcher` and `mangohud` are not in official repos — see their respective
@@ -39,11 +73,19 @@ Available as a **GTK3 GUI** and a **terminal CLI** (fzf-based).
 
 ## Install
 
+<details>
+<summary><b>Installation</b></summary>
+
 ```bash
 ./install.sh
 ```
 
 Installs into `~/.local/bin/` and creates a `.desktop` entry. Adds a shell alias for the CLI to `.bashrc` / `.zshrc` / `config.fish`.
+
+</details>
+
+<details>
+<summary><b>Uninstallation</b></summary>
 
 ```bash
 ./uninstall.sh
@@ -51,11 +93,14 @@ Installs into `~/.local/bin/` and creates a `.desktop` entry. Adds a shell alias
 
 Removes binaries, icon, desktop entry, and shell aliases. Optionally deletes user data.
 
+</details>
+
 ---
 
 ## Usage
 
-### GUI
+<details>
+<summary><b>GUI Usage</b></summary>
 
 ```bash
 MonkeyLauncher
@@ -65,7 +110,10 @@ MonkeyLauncher
 2. Select a game from the list, pick a Proton version, hit **Launch**
 3. Optionally set a favorite Proton, per-game env vars, or save directory via **Game Settings**
 
-### CLI
+</details>
+
+<details>
+<summary><b>CLI Usage</b></summary>
 
 ```bash
 MonkeyLauncher [OPTIONS]
@@ -88,9 +136,14 @@ MonkeyLauncher -s   # set your game directory
 MonkeyLauncher      # pick a game and launch
 ```
 
+</details>
+
 ---
 
 ## Config
+
+<details>
+<summary><b>Configuration Files</b></summary>
 
 All config is stored in `~/.config/MonkeyLauncher/`:
 
@@ -101,9 +154,14 @@ All config is stored in `~/.config/MonkeyLauncher/`:
 └── saves/          # save files, symlinked from the Proton prefix
 ```
 
+</details>
+
 ---
 
-## Build a release (Docker)
+## Build
+
+<details>
+<summary><b>Build a Release (Docker)</b></summary>
 
 Produces binaries compatible with any Linux distro running glibc ≥ 2.31 (Ubuntu 20.04+, Arch, Fedora 36+, Debian 12+…).
 
@@ -113,9 +171,14 @@ Produces binaries compatible with any Linux distro running glibc ≥ 2.31 (Ubunt
 
 Output lands in `dist/`. The GUI binary still requires `python3-gobject` + GTK3 on the target machine at runtime (GObject introspection cannot be bundled).
 
+</details>
+
 ---
 
-## Project structure
+## Project Structure
+
+<details>
+<summary><b>Directory Layout</b></summary>
 
 ```
 src/                  source files (GUI, CLI, icon, desktop entry)
@@ -125,9 +188,14 @@ install.sh
 uninstall.sh
 build-release.sh
 ```
+
+</details>
+
 ---
 
 ## Disclaimer
+
+### Educational Purpose Only
 
 This project was created by a student for educational and research purposes only.
 
