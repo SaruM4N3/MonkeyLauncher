@@ -13,17 +13,25 @@ INSTALL_DEPS=0
 
 # ── Startup checks ─────────────────────────────────────────────────────────────
 if ! pgrep -x steam &>/dev/null; then
-  echo "Steam is not running. Please start Steam first." >&2
-  exit 1
+  read -r -p "Steam is not running. Launch it now and wait? [Y/n] " ans
+  if [[ "$ans" == [nN] ]]; then
+    exit 1
+  fi
+  steam &>/dev/null &
+  echo "Waiting for Steam to start…" >&2
+  until pgrep -x steam &>/dev/null; do sleep 2; done
+  echo "Steam is running." >&2
 fi
 
 if [ ! -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; then
-  echo "Steam app 480 (Spacewar) is not installed — it is required for the Proton prefix." >&2
-  read -r -p "Open Steam to install it now? [Y/n] " ans
-  if [[ "$ans" != [nN] ]]; then
-    steam "steam://install/480"
+  read -r -p "Spacewar (App 480) is not installed. Open Steam to install it and wait? [Y/n] " ans
+  if [[ "$ans" == [nN] ]]; then
+    exit 1
   fi
-  exit 1
+  steam "steam://install/480" &>/dev/null &
+  echo "Waiting for Spacewar to finish installing…" >&2
+  until [ -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; do sleep 3; done
+  echo "Spacewar installed." >&2
 fi
 
 for arg in "$@"; do

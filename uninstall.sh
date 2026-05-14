@@ -2,6 +2,7 @@
 set -e
 
 INSTALL_BIN="$HOME/.local/bin"
+INSTALL_LIB="$HOME/.local/lib/monkeylauncher"
 INSTALL_DESKTOP="$HOME/.local/share/applications"
 ICON_DEST="$HOME/.local/share/icons/monkeylauncher.png"
 CONFIG_DIR="$HOME/.config/MonkeyLauncher"
@@ -22,7 +23,7 @@ echo -e "${BOLD}  MonkeyLauncher Uninstaller${NC}"
 echo "  ==========================="
 echo ""
 
-# ── Remove binaries ────────────────────────────────────────────────────────────
+# ── Remove binaries & lib ──────────────────────────────────────────────────────
 section "Removing binaries…"
 
 for bin in MonkeyLauncher MonkeyLauncherCLI; do
@@ -33,6 +34,11 @@ for bin in MonkeyLauncher MonkeyLauncherCLI; do
     warn "$INSTALL_BIN/$bin not found — skipping"
   fi
 done
+
+if [ -d "$INSTALL_LIB" ]; then
+  rm -rf "$INSTALL_LIB"
+  ok "Removed $INSTALL_LIB"
+fi
 
 # ── Remove icon ────────────────────────────────────────────────────────────────
 section "Removing icon…"
