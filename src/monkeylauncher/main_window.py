@@ -1,4 +1,5 @@
 import os
+import shlex
 import shutil
 import subprocess
 import threading
@@ -628,19 +629,37 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             'DXVK_STATE_CACHE':  '1',
             'MANGOHUD':          '1' if self.mangohud else '0',
         })
-        # Per-game overrides applied after defaults so they take effect
+        # Per-game overrides applied after defaults so they take effect.
+        # KEY=VALUE tokens become env vars; everything else is treated as
+        # a command-line token, Steam-%command%-style: tokens before
+        # "%command%" wrap/prefix the launch command (e.g. "gamemoderun
+        # %command%"), tokens after it (or all of them, if %command% is
+        # omitted) are appended as extra args to the game.
+        prefix_args, suffix_args = [], []
         if launch_env:
-            for pair in launch_env.split():
-                if '=' in pair:
-                    k, v = pair.split('=', 1)
-                    env[k] = v
+            tokens = shlex.split(launch_env)
+            if '%command%' in tokens:
+                idx = tokens.index('%command%')
+                before, after = tokens[:idx], tokens[idx + 1:]
+            else:
+                before, after = [], tokens
+
+            for toks, bucket in ((before, prefix_args), (after, suffix_args)):
+                for tok in toks:
+                    if '=' in tok and not tok.startswith('-'):
+                        k, v = tok.split('=', 1)
+                        env[k] = v
+                    else:
+                        bucket.append(tok)
+
+        cmd = prefix_args + ['umu-run', game_path] + suffix_args
 
         log.info(f"Launching {exe} via {proton.name}")
-        log.debug(f"Launch command: umu-run {game_path}")
+        log.debug(f"Launch command: {' '.join(cmd)}")
         log.debug(f"Launch env overrides: {launch_env or '(none)'}, "
                   f"savedir: {savedir or '(none)'}, mangohud: {self.mangohud}")
 
-        proc = subprocess.Popen(['umu-run', game_path], env=env)
+        proc = subprocess.Popen(cmd, env=env)
         self._running_proc = proc
 
         self.launch_btn.set_label("Stop")

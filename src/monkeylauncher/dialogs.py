@@ -58,21 +58,21 @@ class GameSettingsDialog(Gtk.Dialog):
         self.add_button("Save",   Gtk.ResponseType.OK)
         self.set_default_response(Gtk.ResponseType.OK)
 
-        # Parse existing LAUNCH_ENV
-        existing_env = {}
-        for pair in self.cfg.get('LAUNCH_ENV', '').split():
-            if '=' in pair:
-                k, v = pair.split('=', 1)
-                existing_env[k] = v
-
-        # Parse per-game WINEDLLOVERRIDES if present
+        # Parse existing LAUNCH_ENV: pull WINEDLLOVERRIDES out for the
+        # Compatibility tab, but keep every other token — env vars and
+        # plain launch flags alike — verbatim for the Launch Options field.
         existing_dll = {}
-        has_per_game_dll = 'WINEDLLOVERRIDES' in existing_env
-        if has_per_game_dll:
-            for part in existing_env.pop('WINEDLLOVERRIDES').split(';'):
-                if '=' in part:
-                    dll, mode = part.split('=', 1)
-                    existing_dll[dll.strip()] = mode.strip()
+        has_per_game_dll = False
+        extra_tokens = []
+        for tok in self.cfg.get('LAUNCH_ENV', '').split():
+            if tok.startswith('WINEDLLOVERRIDES='):
+                has_per_game_dll = True
+                for part in tok[len('WINEDLLOVERRIDES='):].split(';'):
+                    if '=' in part:
+                        dll, mode = part.split('=', 1)
+                        existing_dll[dll.strip()] = mode.strip()
+            else:
+                extra_tokens.append(tok)
 
         # ── Steam-settings-style layout: sections on the left, content on
         # the right ──────────────────────────────────────────────────────────
@@ -155,7 +155,7 @@ class GameSettingsDialog(Gtk.Dialog):
         opts_row = Gtk.Box(spacing=8)
         opts_row.pack_start(Gtk.Label(label="Launch options:", xalign=0),
                             False, False, 0)
-        existing_extra = ' '.join(f'{k}={v}' for k, v in existing_env.items())
+        existing_extra = ' '.join(extra_tokens)
         self.launch_opts_entry = Gtk.Entry(hexpand=True,
                                            placeholder_text="e.g. GAMEMODE=1 DRI_PRIME=1")
         self.launch_opts_entry.set_text(existing_extra)
