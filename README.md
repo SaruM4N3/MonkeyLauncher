@@ -68,8 +68,9 @@ Save directory management — saves are symlinked out of the Proton prefix into 
 > `install.sh` detects your distro (Arch, Debian/Ubuntu, Fedora, openSUSE — via
 > `/etc/os-release`) and installs what it can automatically through
 > pacman/apt/dnf/zypper. `mangohud` is packaged everywhere. `umu-launcher` has
-> an official package on Arch, Nobara, and openSUSE; on other distros the
-> installer builds it from source instead (this pulls in the Rust toolchain).
+> an official package on Arch and Nobara only; everywhere else (including
+> vanilla Fedora and openSUSE) the installer builds it from source instead
+> (this pulls in the Rust toolchain).
 
 ---
 

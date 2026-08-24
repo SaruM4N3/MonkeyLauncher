@@ -84,9 +84,14 @@ install_pkg() {
       else
         sudo pacman -S --noconfirm --needed --overwrite '*' $pacman || true
       fi ;;
-    apt)    sudo apt-get install -y "$apt"    || true ;;
-    dnf)    sudo dnf install -y    "$dnf"    || true ;;
-    zypper) sudo zypper install -y "$zypper" || true ;;
+    # $apt/$dnf/$zypper are intentionally unquoted: some callers pass
+    # multiple space-separated package names in one string (e.g. the GTK3
+    # bindings), and each needs to reach the package manager as a separate
+    # argument — quoting them would pass "pkg1 pkg2" as a single (bogus)
+    # package name instead.
+    apt)    sudo apt-get install -y $apt    || true ;;
+    dnf)    sudo dnf install -y    $dnf    || true ;;
+    zypper) sudo zypper install -y $zypper || true ;;
     *)      warn "Install '$pacman' manually then re-run." ;;
   esac
 }
@@ -121,31 +126,85 @@ try_install() {
   return 1
 }
 
+# Ensures `python3 -m pip` works, installing python3-pip if needed (it's a
+# separate package from python3 on Debian/Ubuntu/Fedora/openSUSE). Used
+# wherever we fall back to pip.
+# `python3 -m pip --version` can succeed while `python3 -m venv` still fails:
+# on Debian/Ubuntu, ensurepip's bundled wheels ship in the separate
+# python3-venv package, not python3-pip. Check the thing we actually need.
+_venv_works() {
+  local d; d=$(mktemp -d)
+  python3 -m venv "$d" &>/dev/null
+  local status=$?
+  rm -rf "$d"
+  return $status
+}
+
+ensure_pip() {
+  if _venv_works; then
+    ok "python3-pip"
+    return 0
+  fi
+  warn "python3 venv/pip support not found — installing…"
+  install_pkg python-pip "python3-pip python3-venv" python3-pip python3-pip
+  if _venv_works; then
+    ok "python3-pip"
+    return 0
+  fi
+  warn "Failed to install python3 venv/pip support"
+  return 1
+}
+
 # ── Runtime dependencies ───────────────────────────────────────────────────────
 section "Checking runtime dependencies…"
 
 #                        cmd            pacman           apt           dnf           zypper
 check_or_install         fzf            fzf              fzf           fzf           fzf
-check_or_install         winetricks     winetricks       winetricks    winetricks    winetricks
+
+# winetricks lives in Debian's "contrib" component, which isn't enabled by
+# default on a fresh install (unlike Ubuntu, where the equivalent "universe"
+# component usually already is) — give a specific hint instead of the
+# generic failure message in that case.
+if ! command -v winetricks &>/dev/null; then
+  warn "winetricks not found — installing…"
+  install_pkg winetricks winetricks winetricks winetricks
+  if command -v winetricks &>/dev/null; then
+    ok "winetricks"
+  elif [ "$PKG_MGR" = "apt" ] && [[ "$DISTRO_NAME" == Debian* ]]; then
+    fail "Failed to install winetricks — on Debian it lives in the 'contrib' component, which is disabled by default. Enable it (e.g. 'sudo apt edit-sources', add 'contrib' next to 'main'), run 'sudo apt update', then re-run this installer."
+  else
+    fail "Failed to install winetricks"
+  fi
+fi
+
 check_or_install         xdg-open       xdg-utils        xdg-utils     xdg-utils     xdg-utils
 check_or_install         pgrep          procps-ng        procps        procps-ng     procps
 
-# protontricks: installed via pip if not available as a package
+# protontricks: packaged natively everywhere we support (Debian: contrib,
+# Ubuntu: multiverse, Fedora, openSUSE, Arch) — pip is just a last-resort
+# fallback in case a particular repo setup doesn't have it.
 if command -v protontricks &>/dev/null; then
   ok "protontricks"
 else
-  warn "protontricks not found — installing via pip…"
-  pip install --user --quiet protontricks \
-    || fail "Failed to install protontricks"
-  ok "protontricks"
+  warn "protontricks not found — installing…"
+  install_pkg protontricks protontricks protontricks protontricks
+  if command -v protontricks &>/dev/null; then
+    ok "protontricks"
+  elif ensure_pip && python3 -m pip install --user --quiet protontricks; then
+    ok "protontricks (via pip)"
+  else
+    fail "Failed to install protontricks"
+  fi
 fi
 
 # mangohud: official package on pacman/apt/dnf/zypper
 check_or_install mangohud mangohud mangohud mangohud mangohud
 
-# umu-launcher: official package on Arch (pacman), Nobara (dnf), openSUSE (zypper).
-# Elsewhere (Debian/Ubuntu, vanilla Fedora…) there's no official package, so we
-# build it from source per the project's own instructions.
+# umu-launcher: official package on Arch (pacman) and Nobara (dnf). Elsewhere
+# (Debian/Ubuntu, vanilla Fedora, openSUSE…) there's no official package in the
+# default repos — we still try the native package manager first (in case the
+# user already has a relevant third-party repo enabled), then build from
+# source per the project's own instructions if that fails.
 if command -v umu-run &>/dev/null; then
   ok "umu-run"
 else
@@ -162,13 +221,17 @@ else
     ok "umu-run"
   else
     section "No official umu-launcher package for $DISTRO_NAME — building from source…"
-    warn "This pulls in the Rust toolchain (cargo) if missing — may take a few minutes and a few hundred MB of disk."
+    warn "Needs git, make and python3-pip (already checked below) — may take a minute."
 
     UMU_BUILD_OK=1
-    try_install git   git   git   git   git   || UMU_BUILD_OK=0
-    try_install make  make  make  make  make  || UMU_BUILD_OK=0
-    try_install scdoc scdoc scdoc scdoc scdoc || UMU_BUILD_OK=0
-    try_install cargo rust  cargo cargo cargo || UMU_BUILD_OK=0
+    try_install git     git     git     git     git     || UMU_BUILD_OK=0
+    try_install make    make    make    make    make    || UMU_BUILD_OK=0
+    # The build itself needs python3 (venv + pip) — checked again, harmlessly,
+    # in the "Python & GTK3" section further down.
+    try_install python3 python3 python3 python3 python3 || UMU_BUILD_OK=0
+
+    # The build's venv step needs pip/ensurepip, not just python3 itself.
+    ensure_pip || UMU_BUILD_OK=0
 
     if [ "$UMU_BUILD_OK" -eq 1 ]; then
       UMU_SRC_DIR="$(mktemp -d)"
@@ -200,7 +263,7 @@ if command -v umu-run &>/dev/null; then
     warn "Python 3.14 detected — ensuring libzstd is up to date for umu-run compatibility…"
     install_pkg zstd zstd zstd zstd
     # Also upgrade pyzstd in case the installed version predates Python 3.14 support
-    pip install --user --quiet --upgrade pyzstd 2>/dev/null && ok "pyzstd updated" || true
+    python3 -m pip install --user --quiet --upgrade pyzstd 2>/dev/null && ok "pyzstd updated" || true
     # Verify umu-run actually imports cleanly now
     if python3 -c "import umu" 2>/dev/null || umu-run --help &>/dev/null; then
       ok "umu-run Python 3.14 compatibility"
