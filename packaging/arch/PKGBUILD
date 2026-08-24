@@ -1,0 +1,48 @@
+# Maintainer: SaruM4N3
+pkgname=monkeylauncher
+pkgver=0.3.0
+pkgrel=1
+pkgdesc="A launcher for online-fix Windows games on Linux, built on umu-launcher and Proton"
+arch=('any')
+url="https://github.com/SaruM4N3/MonkeyLauncher"
+license=('custom:educational')
+depends=(
+  'python'
+  'python-gobject'
+  'gtk3'
+  'fzf'
+  'winetricks'
+  'xdg-utils'
+  'procps-ng'
+  'protontricks'
+  'mangohud'
+)
+# umu-launcher isn't in Arch's official core/extra repos (AUR-only, or
+# provided by third-party repos like CachyOS's) — an optdepend rather than a
+# hard depend so `pacman -U` doesn't fail for users without an AUR helper.
+optdepends=(
+  'umu-launcher: runs games through Proton (AUR-only — install via an AUR helper, e.g. `paru -S umu-launcher`)'
+)
+options=('!strip' '!debug')
+
+# No source= array: this PKGBUILD builds directly from the monorepo checkout
+# it ships in (packaging/arch/PKGBUILD), not from a downloaded tarball.
+package() {
+  local repo="$startdir/../.."
+
+  install -d "$pkgdir/usr/lib/monkeylauncher"
+  install -m644 "$repo/src/MonkeyLauncherGUI.py" "$pkgdir/usr/lib/monkeylauncher/MonkeyLauncherGUI.py"
+  cp -r "$repo/src/monkeylauncher" "$pkgdir/usr/lib/monkeylauncher/monkeylauncher"
+  find "$pkgdir/usr/lib/monkeylauncher/monkeylauncher" -type d -exec chmod 755 {} +
+  find "$pkgdir/usr/lib/monkeylauncher/monkeylauncher" -type f -exec chmod 644 {} +
+
+  install -d "$pkgdir/usr/bin"
+  install -m755 "$repo/src/MonkeyLauncherCLI.sh" "$pkgdir/usr/bin/MonkeyLauncherCLI"
+  install -m755 /dev/stdin "$pkgdir/usr/bin/MonkeyLauncher" <<'WRAPPER'
+#!/bin/sh
+exec python3 /usr/lib/monkeylauncher/MonkeyLauncherGUI.py "$@"
+WRAPPER
+
+  install -Dm644 "$repo/src/monkeylauncher.desktop" "$pkgdir/usr/share/applications/monkeylauncher.desktop"
+  install -Dm644 "$repo/src/logo.png" "$pkgdir/usr/share/icons/hicolor/1024x1024/apps/monkeylauncher.png"
+}

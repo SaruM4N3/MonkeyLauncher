@@ -2,7 +2,7 @@
 Name=MonkeyLauncher
 Comment=Wine/Proton game launcher
 Exec=MonkeyLauncher
-Icon=applications-games
+Icon=monkeylauncher
 Type=Application
 Categories=Game;
 Terminal=false

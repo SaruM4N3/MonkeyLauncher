@@ -1,0 +1,18 @@
+Package: monkeylauncher
+Version: VERSION_PLACEHOLDER
+Section: games
+Priority: optional
+Architecture: all
+Depends: python3, python3-gi, gir1.2-gtk-3.0, libgtk-3-0, fzf, winetricks, xdg-utils, procps, fonts-dejavu-core
+Recommends: mangohud, protontricks
+Suggests: umu-launcher
+Maintainer: SaruM4N3 <zakobajo@gmail.com>
+Homepage: https://github.com/SaruM4N3/MonkeyLauncher
+Description: Launcher for online-fix Windows games on Linux
+ A launcher for online-fix Windows games on Linux, built on top of
+ umu-launcher and Proton. Available as a GTK3 GUI and a terminal CLI
+ (fzf-based).
+ .
+ umu-launcher has no official Debian/Ubuntu package; install it manually
+ from https://github.com/Open-Wine-Components/umu-launcher or run the
+ project's install.sh, which builds it from source automatically.

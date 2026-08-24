@@ -1,0 +1,15 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: MonkeyLauncher
+Source: https://github.com/SaruM4N3/MonkeyLauncher
+
+Files: *
+Copyright: SaruM4N3
+License: custom
+
+License: custom
+ This project was created for educational and research purposes only.
+ MonkeyLauncher does not provide, distribute, host, or include any
+ copyrighted game files, cracks, or bypass tools. Users are responsible
+ for ensuring they legally own any games they run with this software and
+ for complying with the laws and terms of service applicable in their
+ country. See the "Disclaimer" section of the upstream README for details.

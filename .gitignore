@@ -1,3 +1,7 @@
 dist/
 __pycache__/
 *.pyc
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/*.pkg.tar.*
+packaging/arch/*.log

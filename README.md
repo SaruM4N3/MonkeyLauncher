@@ -78,13 +78,34 @@ Save directory management — saves are symlinked out of the Proton prefix into 
 ## Install
 
 <details>
-<summary><b>Installation</b></summary>
+<summary><b>Installation via package (Debian/Ubuntu, Arch)</b></summary>
+
+Grab the `.deb` or `.pkg.tar.zst` from the [latest release](https://github.com/SaruM4N3/MonkeyLauncher/releases/latest) and install it with your package manager — dependencies are pulled in automatically.
+
+**Debian / Ubuntu:**
+```bash
+sudo apt install ./monkeylauncher_*.deb
+```
+> `winetricks` and `protontricks` live in Debian's `contrib` component, which isn't enabled by default. If the install fails on those, enable it first (`sudo apt edit-sources`, add `contrib` next to `main`, then `sudo apt update`).
+
+**Arch:**
+```bash
+sudo pacman -U monkeylauncher-*.pkg.tar.zst
+```
+> `umu-launcher` isn't in Arch's official repos — install it separately via an AUR helper (`paru -S umu-launcher`) or build it from source.
+
+Both packages install to `/usr` and add a `MonkeyLauncher` app entry + `MonkeyLauncherCLI` command.
+
+</details>
+
+<details>
+<summary><b>Installation from source</b></summary>
 
 ```bash
 ./install.sh
 ```
 
-Installs into `~/.local/bin/` and creates a `.desktop` entry. Adds a shell alias for the CLI to `.bashrc` / `.zshrc` / `config.fish`.
+Installs into `~/.local/bin/` and creates a `.desktop` entry. Adds a shell alias for the CLI to `.bashrc` / `.zshrc` / `config.fish`. Detects your distro and installs runtime dependencies automatically (including building `umu-launcher` from source where there's no native package).
 
 </details>
 
@@ -183,6 +204,17 @@ Produces binaries compatible with any Linux distro running glibc ≥ 2.31 (Ubunt
 ```
 
 Output lands in `dist/`. The GUI binary still requires `python3-gobject` + GTK3 on the target machine at runtime (GObject introspection cannot be bundled).
+
+</details>
+
+<details>
+<summary><b>Build distro packages (.deb / Arch)</b></summary>
+
+```bash
+./packaging/build-all.sh
+```
+
+Builds a `.deb` (via Docker, using `debian:bookworm-slim`) and an Arch package (via `makepkg` — needs an Arch-based host). Both install to `/usr` and declare real package-manager dependencies instead of bundling anything. Output lands in `dist/`. See `packaging/arch/PKGBUILD` and `packaging/debian/control` for the exact dependency lists.
 
 </details>
 
