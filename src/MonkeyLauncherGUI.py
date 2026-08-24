@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
+import logging
 import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import gi
@@ -17,8 +20,60 @@ CONFIG_FILE     = CONFIG_DIR / 'config'
 GAMEDIRS_FILE   = CONFIG_DIR / 'gamedirs'
 GAMES_DIR       = CONFIG_DIR / 'games'
 SAVES_BASE      = CONFIG_DIR / 'saves'
+LOG_DIR         = CONFIG_DIR / 'logs'
+LOG_FILE        = LOG_DIR / 'monkeylauncher.log'
 STEAM_ROOT      = Path.home() / '.local' / 'share' / 'Steam'
 WINEPREFIX_PATH = STEAM_ROOT / 'steamapps' / 'compatdata' / '480'
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+class ColorFormatter(logging.Formatter):
+    """Colorizes console output by level; plain text when writing to a file."""
+    COLORS = {
+        logging.DEBUG:    '\033[2;37m',   # dim gray
+        logging.INFO:     '\033[0;36m',   # cyan
+        logging.WARNING:  '\033[1;33m',   # yellow
+        logging.ERROR:    '\033[0;31m',   # red
+        logging.CRITICAL: '\033[1;41;37m',  # bold white on red
+    }
+    RESET = '\033[0m'
+
+    def __init__(self, use_color):
+        super().__init__(fmt='%(asctime)s %(levelname)-8s %(message)s',
+                          datefmt='%H:%M:%S')
+        self.use_color = use_color
+
+    def format(self, record):
+        text = super().format(record)
+        if self.use_color:
+            color = self.COLORS.get(record.levelno, '')
+            return f'{color}{text}{self.RESET}'
+        return text
+
+def setup_logging():
+    debug = (os.environ.get('MONKEYLAUNCHER_DEBUG') == '1'
+              or '--debug' in sys.argv or '-v' in sys.argv)
+
+    logger = logging.getLogger('monkeylauncher')
+    logger.setLevel(logging.DEBUG)
+
+    console = logging.StreamHandler(sys.stderr)
+    console.setLevel(logging.DEBUG if debug else logging.INFO)
+    console.setFormatter(ColorFormatter(use_color=sys.stderr.isatty()))
+    logger.addHandler(console)
+
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            LOG_FILE, maxBytes=2_000_000, backupCount=2, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(ColorFormatter(use_color=False))
+        logger.addHandler(file_handler)
+    except OSError as e:
+        logger.warning(f"Could not open log file {LOG_FILE}: {e}")
+
+    return logger
+
+log = setup_logging()
 
 EXCLUDE_DIRS  = {'_CommonRedist', 'Binaries'}
 EXCLUDE_NAMES = re.compile(r'CrashHandler', re.IGNORECASE)
@@ -417,14 +472,15 @@ def find_proton_wine(proton_path):
 def run_through_proton(exe_path, proton_path):
     env = os.environ.copy()
     env.update({
-        'WINE':       str(proton / 'files' / 'bin' / 'wine64'),
-        'WINESERVER': str(proton / 'files' / 'bin' / 'wineserver'),
+        'WINE':       str(proton_path / 'files' / 'bin' / 'wine64'),
+        'WINESERVER': str(proton_path / 'files' / 'bin' / 'wineserver'),
         'WINEPREFIX': str(WINEPREFIX_PATH) + '/',
         'WINEDLLOVERRIDES':  'OnlineFix64=n;SteamOverlay64=n;winmm=n,b;dnet=n;steam_api64=n',
         'PROTONPATH': str(proton_path),
         'DXVK_STATE_CACHE':  '1',
         'GAMEID':     '480',
     })
+    log.info(f"Running installer via Proton: {exe_path} (proton={proton_path.name})")
     subprocess.Popen(['umu-run', exe_path], env=env)
 
 # ── Main window ────────────────────────────────────────────────────────────────
@@ -440,6 +496,9 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         self.mangohud      = False
         self.show_fullpath = False
         self._running_proc = None
+
+        log.debug(f"Detected {len(self.proton_dirs)} Proton installation(s): "
+                  f"{[d.name for d in self.proton_dirs]}")
 
         self._build_ui()
         self._load_games()
@@ -670,11 +729,13 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         self.launch_btn.set_sensitive(False)
         self.game_settings_btn.set_sensitive(False)
         self.spinner.start()
+        log.debug(f"Scanning {len(self.gamedirs)} game director(y/ies): {self.gamedirs}")
 
         def scan():
             results = []
             for gamedir in list(self.gamedirs):
                 if not os.path.isdir(gamedir):
+                    log.warning(f"Game directory no longer exists, skipping: {gamedir}")
                     continue
                 exes = []
                 for exe in get_exe_list(gamedir):
@@ -689,6 +750,8 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         threading.Thread(target=scan, daemon=True).start()
 
     def _apply_games(self, results):
+        total = sum(len(exes) for _, exes in results)
+        log.info(f"Found {total} game(s) across {len(results)} director(y/ies)")
         for gamedir, exes in results:
             parent = self.store.append(None, [Path(gamedir).name, '', gamedir])
             for exe, gcfg, gdir in exes:
@@ -778,12 +841,14 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
 
     def on_launch(self, _):
         if self._running_proc is not None:
+            log.info(f"Stopping game (pid={self._running_proc.pid})")
             self._running_proc.terminate()
             return
 
         exe, gamedir = self._selected_game()
         proton = self._selected_proton()
         if not exe or not proton:
+            log.warning("Launch attempted without a selected game/Proton version")
             show_error(self, "Select a game and a Proton version first.")
             return
 
@@ -796,7 +861,7 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             try:
                 setup_save_symlink(savedir, game_save_path(exe))
             except Exception as e:
-                print(f"Save symlink warning: {e}")
+                log.warning(f"Save symlink warning for {exe}: {e}")
 
         env = os.environ.copy()
         env.update({
@@ -816,6 +881,11 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
                     k, v = pair.split('=', 1)
                     env[k] = v
 
+        log.info(f"Launching {exe} via {proton.name}")
+        log.debug(f"Launch command: umu-run {game_path}")
+        log.debug(f"Launch env overrides: {launch_env or '(none)'}, "
+                  f"savedir: {savedir or '(none)'}, mangohud: {self.mangohud}")
+
         proc = subprocess.Popen(['umu-run', game_path], env=env)
         self._running_proc = proc
 
@@ -827,6 +897,7 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         GLib.child_watch_add(GLib.PRIORITY_DEFAULT, proc.pid, self._on_game_exit)
 
     def _on_game_exit(self, pid, _status):
+        log.info(f"Game process exited (pid={pid}, status={_status})")
         self._running_proc = None
         self.launch_btn.set_label("Launch")
         self.launch_btn.get_style_context().remove_class('destructive-action')
@@ -945,12 +1016,19 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         self._run_winetricks(verbs, proton)
 
     def _run_winetricks(self, verbs, _proton):
+        log.info(f"Installing winetricks packages: {', '.join(verbs)}")
+
         def worker():
             for verb in verbs:
                 GLib.idle_add(self._wt_set_status, verb, 'running')
+                log.debug(f"protontricks --no-bwrap 480 {verb}")
                 result = subprocess.run(
                     ['protontricks', '--no-bwrap', '480', verb])
                 ok = result.returncode == 0
+                if ok:
+                    log.info(f"Installed {verb}")
+                else:
+                    log.error(f"Failed to install {verb} (exit {result.returncode})")
                 GLib.idle_add(self._wt_set_status, verb, 'ok' if ok else 'error')
                 if ok:
                     GLib.idle_add(self.winetricks_checks[verb].set_active, False)
@@ -1083,8 +1161,13 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         def worker():
             for exe_path in checked:
                 GLib.idle_add(self._set_installer_status, exe_path, 'running')
+                log.info(f"Running installer: {exe_path}")
                 result = subprocess.run(['umu-run', exe_path], env=env)
                 ok = result.returncode == 0
+                if ok:
+                    log.info(f"Installer finished: {exe_path}")
+                else:
+                    log.error(f"Installer failed: {exe_path} (exit {result.returncode})")
                 GLib.idle_add(self._set_installer_status, exe_path, 'ok' if ok else 'error')
                 if ok:
                     GLib.idle_add(self._uncheck_installer, exe_path)
@@ -1126,6 +1209,7 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             "This will clear all game directories, Proton preference, "
             "and per-game settings. Save files are NOT deleted.")
         if dialog.run() == Gtk.ResponseType.YES:
+            log.warning("Resetting all config (games, dirs, Proton preference) at user's request")
             if CONFIG_FILE.exists():   CONFIG_FILE.unlink()
             if GAMEDIRS_FILE.exists(): GAMEDIRS_FILE.unlink()
             if GAMES_DIR.exists():     shutil.rmtree(GAMES_DIR)
@@ -1192,7 +1276,9 @@ def wait_for_spacewar(parent=None):
     return response != Gtk.ResponseType.CANCEL
 
 def run_startup_checks(parent=None):
+    log.debug("Running startup checks (Steam running? App 480 installed?)")
     if not check_steam_running():
+        log.info("Steam is not running")
         d = Gtk.MessageDialog(
             transient_for=parent, flags=0,
             message_type=Gtk.MessageType.QUESTION,
@@ -1201,11 +1287,14 @@ def run_startup_checks(parent=None):
         d.format_secondary_text("Launch Steam now and wait for it to start?")
         response = d.run(); d.destroy()
         if response != Gtk.ResponseType.YES:
+            log.warning("User declined to launch Steam — aborting startup")
             return False
         if not wait_for_steam(parent):
+            log.warning("User cancelled while waiting for Steam to start")
             return False
 
     if not check_app480_installed():
+        log.info("Steam App 480 (Spacewar) is not installed")
         d = Gtk.MessageDialog(
             transient_for=parent, flags=0,
             message_type=Gtk.MessageType.QUESTION,
@@ -1216,10 +1305,13 @@ def run_startup_checks(parent=None):
             "Open Steam to install it now and wait?")
         response = d.run(); d.destroy()
         if response != Gtk.ResponseType.YES:
+            log.warning("User declined to install App 480 — aborting startup")
             return False
         if not wait_for_spacewar(parent):
+            log.warning("User cancelled while waiting for App 480 to install")
             return False
 
+    log.debug("Startup checks passed")
     return True
 
 # ── App entry point ────────────────────────────────────────────────────────────
@@ -1228,7 +1320,9 @@ class App(Gtk.Application):
         super().__init__(application_id='com.monkeylauncher.app')
 
     def do_activate(self):
+        log.info("Starting MonkeyLauncher GUI")
         if not run_startup_checks():
+            log.info("Startup checks failed or were cancelled — exiting")
             self.quit()
             return
         win = MonkeyLauncher(self)

@@ -11,6 +11,42 @@ SETUP_PROTON=0
 SETUP_ENV=0
 INSTALL_DEPS=0
 
+# ── Logging ──────────────────────────────────────────────────────────────────
+LOG_DIR="$HOME/.config/MonkeyLauncher/logs"
+LOG_FILE="$LOG_DIR/monkeylauncher-cli.log"
+mkdir -p "$LOG_DIR"
+# Cap the log file so it doesn't grow unbounded across runs.
+if [ -f "$LOG_FILE" ] && [ "$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)" -gt 2000000 ]; then
+  tail -c 500000 "$LOG_FILE" > "$LOG_FILE.tmp" 2>/dev/null && mv "$LOG_FILE.tmp" "$LOG_FILE"
+fi
+
+DEBUG=0
+[ "${MONKEYLAUNCHER_DEBUG:-0}" = "1" ] && DEBUG=1
+for arg in "$@"; do [ "$arg" = "-v" ] && DEBUG=1; done
+
+LVL_DEBUG=0; LVL_INFO=1; LVL_WARN=2; LVL_ERROR=3
+CONSOLE_LEVEL=$LVL_INFO
+[ "$DEBUG" -eq 1 ] && CONSOLE_LEVEL=$LVL_DEBUG
+
+COLOR_GRAY='\033[2;37m'
+COLOR_CYAN='\033[0;36m'
+COLOR_YELLOW='\033[1;33m'
+COLOR_RED='\033[0;31m'
+LOG_NC='\033[0m'
+
+_log() {
+  local lvl="$1" name="$2" color="$3"; shift 3
+  local ts; ts=$(date '+%H:%M:%S')
+  printf '%s %-5s %s\n' "$ts" "$name" "$*" >> "$LOG_FILE"
+  if [ "$lvl" -ge "$CONSOLE_LEVEL" ]; then
+    echo -e "${color}${ts} ${name}${LOG_NC} $*" >&2
+  fi
+}
+log_debug() { _log "$LVL_DEBUG" "DEBUG" "$COLOR_GRAY"   "$@"; }
+log_info()  { _log "$LVL_INFO"  "INFO"  "$COLOR_CYAN"   "$@"; }
+log_warn()  { _log "$LVL_WARN"  "WARN"  "$COLOR_YELLOW" "$@"; }
+log_error() { _log "$LVL_ERROR" "ERROR" "$COLOR_RED"    "$@"; }
+
 # ── Startup checks ─────────────────────────────────────────────────────────────
 if ! pgrep -x steam &>/dev/null; then
   read -r -p "Steam is not running. Launch it now and wait? [Y/n] " ans
@@ -18,9 +54,9 @@ if ! pgrep -x steam &>/dev/null; then
     exit 1
   fi
   steam &>/dev/null &
-  echo "Waiting for Steam to start…" >&2
+  log_info "Waiting for Steam to start…"
   until pgrep -x steam &>/dev/null; do sleep 2; done
-  echo "Steam is running." >&2
+  log_info "Steam is running."
 fi
 
 if [ ! -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; then
@@ -29,9 +65,9 @@ if [ ! -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; then
     exit 1
   fi
   steam "steam://install/480" &>/dev/null &
-  echo "Waiting for Spacewar to finish installing…" >&2
+  log_info "Waiting for Spacewar to finish installing…"
   until [ -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; do sleep 3; done
-  echo "Spacewar installed." >&2
+  log_info "Spacewar installed."
 fi
 
 for arg in "$@"; do
@@ -41,9 +77,11 @@ for arg in "$@"; do
     -p) SETUP_PROTON=1 ;;
     -e) SETUP_ENV=1 ;;
     -i) INSTALL_DEPS=1 ;;
+    -v) DEBUG=1 ;;
     -r)
       read -r -p "Reset config and clear all settings? [y/N] " confirm
       [[ "$confirm" != [yY] ]] && exit 0
+      log_warn "Resetting all config at user's request"
       rm -f "$CONFIG_FILE"
       rm -rf "$GAMES_DIR"
       echo "Config cleared."
@@ -59,10 +97,12 @@ for arg in "$@"; do
       echo "  -i    Install dependencies into the Proton prefix via winetricks"
       echo "  -r    Reset: clear all saved config"
       echo "  -d    Enable MangoHud overlay"
+      echo "  -v    Verbose: show debug logs (also: MONKEYLAUNCHER_DEBUG=1)"
       echo "  -h    Show this help message"
       echo ""
       echo "Config:  $CONFIG_FILE"
       echo "Saves:   $SAVES_BASE/"
+      echo "Logs:    $LOG_FILE"
       exit 0
       ;;
   esac
@@ -101,7 +141,7 @@ pick_directory() {
 collect_proton_dirs() {
   local VDF="$STEAM_ROOT/steamapps/libraryfolders.vdf"
   if [ ! -f "$VDF" ]; then
-    echo "Steam library config not found: $VDF" >&2
+    log_error "Steam library config not found: $VDF"
     return 1
   fi
   mapfile -t STEAM_LIBS < <(grep '"path"' "$VDF" | awk -F'"' '{print $4}')
@@ -112,9 +152,10 @@ collect_proton_dirs() {
     done < <(find "$lib/steamapps/common" -maxdepth 1 -name 'Proton*' -type d -print0 2>/dev/null | sort -z)
   done
   if [ ${#PROTON_DIRS[@]} -eq 0 ]; then
-    echo "No Proton installations found." >&2
+    log_error "No Proton installations found."
     return 1
   fi
+  log_debug "Found ${#PROTON_DIRS[@]} Proton installation(s): ${PROTON_DIRS[*]##*/}"
 }
 
 # --- Shared: build exe list ---
@@ -125,6 +166,7 @@ build_exe_list() {
     -not -name '*CrashHandler*.exe' \
     | sort)
   EXE_LABELS=("${EXE_PATHS[@]#"$GAMEDIR/"}")
+  log_debug "Found ${#EXE_PATHS[@]} exe(s) in $GAMEDIR"
 }
 
 # --- Shared: set up save dir symlink before launch ---
@@ -134,6 +176,7 @@ setup_save_symlink() {
   mkdir -p "$ml_savedir"
   if [ -d "$prefix_savedir" ] && [ ! -L "$prefix_savedir" ]; then
     # First time: migrate existing saves into MonkeyLauncher dir
+    log_debug "Migrating existing saves from $prefix_savedir to $ml_savedir"
     cp -a "$prefix_savedir/." "$ml_savedir/"
     rm -rf "$prefix_savedir"
     echo "Migrated existing saves to $ml_savedir"
@@ -148,23 +191,24 @@ if [ "$SETUP" -eq 1 ]; then
   mkdir -p "$(dirname "$CONFIG_FILE")"
   SAVED_PROTON=$(grep '^PROTONPATH=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
   { echo "GAMEDIR=$GAMEDIR"; [ -n "$SAVED_PROTON" ] && echo "PROTONPATH=$SAVED_PROTON"; } > "$CONFIG_FILE"
-  echo "Game directory saved: $GAMEDIR"
+  log_info "Game directory saved: $GAMEDIR"
   exit 0
 fi
 
 # --- Load global config (required for -e, -p, -i too) ---
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "No game directory configured. Run with -s first." >&2
+  log_error "No game directory configured. Run with -s first."
   exit 1
 fi
 GAMEDIR=$(grep '^GAMEDIR=' "$CONFIG_FILE" | cut -d= -f2-)
 PROTONPATH=$(grep '^PROTONPATH=' "$CONFIG_FILE" | cut -d= -f2-)
+log_debug "Loaded config: GAMEDIR=$GAMEDIR PROTONPATH=${PROTONPATH:-(none saved)}"
 
 # --- Game settings page ---
 if [ "$SETUP_ENV" -eq 1 ]; then
   build_exe_list
   if [ ${#EXE_PATHS[@]} -eq 0 ]; then
-    echo "No .exe files found in $GAMEDIR" >&2
+    log_error "No .exe files found in $GAMEDIR"
     exit 1
   fi
 
@@ -229,7 +273,7 @@ if [ "$SETUP_PROTON" -eq 1 ]; then
   PROTONPATH=$(printf '%s\n' "${PROTON_DIRS[@]}" | grep -F "/$PROTON_LABEL")
   SAVED_GAMEDIR=$(grep '^GAMEDIR=' "$CONFIG_FILE" | cut -d= -f2-)
   { [ -n "$SAVED_GAMEDIR" ] && echo "GAMEDIR=$SAVED_GAMEDIR"; echo "PROTONPATH=$PROTONPATH"; } > "$CONFIG_FILE"
-  echo "Favorite Proton saved: $PROTON_LABEL"
+  log_info "Favorite Proton saved: $PROTON_LABEL"
   exit 0
 fi
 
@@ -274,18 +318,20 @@ if [ "$INSTALL_DEPS" -eq 1 ]; then
           --header="All .exe files including CommonRedist and Binaries")
     [ -z "$EXE_LABEL" ] && exit 0
     EXE_PATH="$GAMEDIR/$EXE_LABEL"
-    echo "Running: $EXE_PATH"
+    log_info "Running installer: $EXE_PATH"
     WINE="$PROTONPATH/files/bin/wine64" \
     WINESERVER="$PROTONPATH/files/bin/wineserver" \
     WINEPREFIX="$WINEPREFIX_PATH/" \
     umu-run "$EXE_PATH"
+    log_debug "Installer exited with status $?"
   else
     VERBS=$(echo "$SELECTED" | awk '{print $1}' | tr '\n' ' ')
-    echo "Installing: $VERBS"
+    log_info "Installing dependencies: $VERBS"
     WINE="$PROTONPATH/files/bin/wine64" \
     WINESERVER="$PROTONPATH/files/bin/wineserver" \
     WINEPREFIX="$WINEPREFIX_PATH/" \
     winetricks --unattended $VERBS
+    log_debug "winetricks exited with status $?"
   fi
   exit 0
 fi
@@ -293,7 +339,7 @@ fi
 # --- Pick game ---
 build_exe_list
 if [ ${#EXE_PATHS[@]} -eq 0 ]; then
-  echo "No .exe files found in $GAMEDIR" >&2
+  log_error "No .exe files found in $GAMEDIR"
   exit 1
 fi
 
@@ -320,6 +366,10 @@ if [ -z "$PROTONPATH" ]; then
 fi
 
 # --- Launch ---
+log_info "Launching $GAME_LABEL via $(basename "$PROTONPATH")"
+log_debug "Launch command: umu-run $GAME"
+log_debug "Launch env overrides: ${LAUNCH_ENV:-(none)}, savedir: ${SAVEDIR:-(none)}, mangohud: $MANGOHUD"
+
 env $LAUNCH_ENV \
   WINEPREFIX="$WINEPREFIX_PATH/" \
   WINEDLLOVERRIDES="OnlineFix64=n;SteamOverlay64=n;winmm=n,b;dnet=n;steam_api64=n" \
@@ -328,3 +378,4 @@ env $LAUNCH_ENV \
   DXVK_STATE_CACHE=1 \
   MANGOHUD=$MANGOHUD \
   umu-run "$GAME"
+log_debug "Game process exited with status $?"
