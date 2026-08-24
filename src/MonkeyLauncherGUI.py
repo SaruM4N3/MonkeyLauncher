@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -155,6 +156,22 @@ def get_proton_dirs():
                 key=lambda d: d.name
             )
     return dirs
+
+def get_spacewar_dir():
+    manifest = STEAM_ROOT / 'steamapps' / 'appmanifest_480.acf'
+    if not manifest.exists():
+        return None
+    m = re.search(r'"installdir"\s+"([^"]+)"', manifest.read_text())
+    installdir = m.group(1) if m else 'Spacewar'
+    d = STEAM_ROOT / 'steamapps' / 'common' / installdir
+    return d if d.is_dir() else None
+
+def find_spacewar_exe():
+    d = get_spacewar_dir()
+    if not d:
+        return None
+    exes = sorted(d.rglob('*.exe'))
+    return exes[0] if exes else None
 
 def get_exe_list(gamedir):
     base = Path(gamedir)
@@ -1275,6 +1292,91 @@ def wait_for_spacewar(parent=None):
     d.destroy()
     return response != Gtk.ResponseType.CANCEL
 
+def pick_bootstrap_proton(parent=None):
+    """Returns the Proton dir to use for the initial prefix setup: the saved
+    favorite if there is one, otherwise prompts the user to pick one (and
+    saves that choice, same as the regular favorite-Proton setting)."""
+    cfg = read_config(CONFIG_FILE)
+    saved = cfg.get('PROTONPATH', '')
+    if saved and Path(saved).is_dir():
+        return Path(saved)
+
+    proton_dirs = get_proton_dirs()
+    if not proton_dirs:
+        show_error(parent, "No Proton installation found in your Steam libraries.\n"
+                            "Install a Proton version via Steam first.")
+        return None
+
+    d = Gtk.Dialog(title="Select a Proton version", transient_for=parent, flags=0)
+    d.set_default_size(420, -1)
+    d.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "OK", Gtk.ResponseType.OK)
+    box = d.get_content_area()
+    box.set_spacing(8)
+    label = Gtk.Label(
+        label="MonkeyLauncher needs a Proton version to set up its shared prefix.",
+        wrap=True, margin=12)
+    box.pack_start(label, False, False, 0)
+    combo = Gtk.ComboBoxText(margin_start=12, margin_end=12, margin_bottom=12)
+    for pd in proton_dirs:
+        combo.append_text(pd.name)
+    combo.set_active(0)
+    box.pack_start(combo, False, False, 0)
+    d.show_all()
+
+    proton = None
+    if d.run() == Gtk.ResponseType.OK:
+        idx = combo.get_active()
+        if idx >= 0:
+            proton = proton_dirs[idx]
+            cfg['PROTONPATH'] = str(proton)
+            write_config(CONFIG_FILE, cfg)
+            log.info(f"Favorite Proton saved: {proton.name}")
+    d.destroy()
+    return proton
+
+def bootstrap_proton_prefix(proton_path):
+    """Creates the shared compatdata/480 prefix by launching Spacewar once
+    through the given Proton, then killing it as soon as the prefix
+    directory shows up. Runs quietly (no dialog) — just a blocking wait."""
+    exe = find_spacewar_exe()
+    if not exe:
+        log.error("Could not find a Spacewar executable to initialize the Proton prefix.")
+        return False
+
+    log.info(f"Proton prefix not found — setting it up (first run) using {proton_path.name}…")
+    env = os.environ.copy()
+    env.update({
+        'WINE':       str(proton_path / 'files' / 'bin' / 'wine64'),
+        'WINESERVER': str(proton_path / 'files' / 'bin' / 'wineserver'),
+        'WINEPREFIX': str(WINEPREFIX_PATH) + '/',
+        'PROTONPATH': str(proton_path),
+        'GAMEID':     '480',
+    })
+    log.debug(f"Bootstrapping prefix with {exe} via {proton_path.name}")
+    proc = subprocess.Popen(['umu-run', str(exe)], env=env,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    pfx = WINEPREFIX_PATH / 'pfx'
+    waited = 0
+    while not pfx.is_dir() and proc.poll() is None and waited < 180:
+        time.sleep(1)
+        waited += 1
+
+    ready = pfx.is_dir()
+    if proc.poll() is None:
+        log.debug("Terminating bootstrap process now that the prefix exists")
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    if ready:
+        log.info(f"Proton prefix created at {pfx}")
+    else:
+        log.error("Proton prefix setup timed out or failed.")
+    return ready
+
 def run_startup_checks(parent=None):
     log.debug("Running startup checks (Steam running? App 480 installed?)")
     if not check_steam_running():
@@ -1309,6 +1411,16 @@ def run_startup_checks(parent=None):
             return False
         if not wait_for_spacewar(parent):
             log.warning("User cancelled while waiting for App 480 to install")
+            return False
+
+    if not (WINEPREFIX_PATH / 'pfx').is_dir():
+        proton = pick_bootstrap_proton(parent)
+        if not proton:
+            log.warning("No Proton version selected — cannot set up the prefix")
+            return False
+        if not bootstrap_proton_prefix(proton):
+            show_error(parent, "Could not set up the Proton prefix automatically.\n"
+                                "Try a different Proton version, or launch Spacewar once from Steam.")
             return False
 
     log.debug("Startup checks passed")

@@ -47,67 +47,6 @@ log_info()  { _log "$LVL_INFO"  "INFO"  "$COLOR_CYAN"   "$@"; }
 log_warn()  { _log "$LVL_WARN"  "WARN"  "$COLOR_YELLOW" "$@"; }
 log_error() { _log "$LVL_ERROR" "ERROR" "$COLOR_RED"    "$@"; }
 
-# ── Startup checks ─────────────────────────────────────────────────────────────
-if ! pgrep -x steam &>/dev/null; then
-  read -r -p "Steam is not running. Launch it now and wait? [Y/n] " ans
-  if [[ "$ans" == [nN] ]]; then
-    exit 1
-  fi
-  steam &>/dev/null &
-  log_info "Waiting for Steam to start…"
-  until pgrep -x steam &>/dev/null; do sleep 2; done
-  log_info "Steam is running."
-fi
-
-if [ ! -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; then
-  read -r -p "Spacewar (App 480) is not installed. Open Steam to install it and wait? [Y/n] " ans
-  if [[ "$ans" == [nN] ]]; then
-    exit 1
-  fi
-  steam "steam://install/480" &>/dev/null &
-  log_info "Waiting for Spacewar to finish installing…"
-  until [ -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; do sleep 3; done
-  log_info "Spacewar installed."
-fi
-
-for arg in "$@"; do
-  case "$arg" in
-    -d) MANGOHUD=1 ;;
-    -s) SETUP=1 ;;
-    -p) SETUP_PROTON=1 ;;
-    -e) SETUP_ENV=1 ;;
-    -i) INSTALL_DEPS=1 ;;
-    -v) DEBUG=1 ;;
-    -r)
-      read -r -p "Reset config and clear all settings? [y/N] " confirm
-      [[ "$confirm" != [yY] ]] && exit 0
-      log_warn "Resetting all config at user's request"
-      rm -f "$CONFIG_FILE"
-      rm -rf "$GAMES_DIR"
-      echo "Config cleared."
-      exit 0
-      ;;
-    -h)
-      echo "Usage: MonkeyLauncher.sh [OPTIONS]"
-      echo ""
-      echo "Options:"
-      echo "  -s    Setup: set the game directory to scan for .exe files"
-      echo "  -p    Set favorite Proton version (saved, skips prompt on launch)"
-      echo "  -e    Open game settings page (per-game launch env vars + save dir)"
-      echo "  -i    Install dependencies into the Proton prefix via winetricks"
-      echo "  -r    Reset: clear all saved config"
-      echo "  -d    Enable MangoHud overlay"
-      echo "  -v    Verbose: show debug logs (also: MONKEYLAUNCHER_DEBUG=1)"
-      echo "  -h    Show this help message"
-      echo ""
-      echo "Config:  $CONFIG_FILE"
-      echo "Saves:   $SAVES_BASE/"
-      echo "Logs:    $LOG_FILE"
-      exit 0
-      ;;
-  esac
-done
-
 # --- Shared: game label -> sanitized key ---
 game_key() {
   local key="${1//\//__}"
@@ -183,6 +122,137 @@ setup_save_symlink() {
   fi
   ln -sfn "$ml_savedir" "$prefix_savedir"
 }
+
+# --- Shared: ensure the shared Proton prefix (compatdata/480) exists ---
+# Installing App 480 only downloads its files; the actual WINEPREFIX is only
+# created the first time something is run through Proton with GAMEID=480. We
+# bootstrap it here by launching Spacewar itself once, then killing it as
+# soon as the prefix directory shows up.
+ensure_proton_prefix() {
+  [ -d "$WINEPREFIX_PATH/pfx" ] && return 0
+
+  log_info "Proton prefix not found — setting it up (first run)…"
+
+  local proton_path
+  proton_path=$(grep '^PROTONPATH=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+  if [ -z "$proton_path" ] || [ ! -d "$proton_path" ]; then
+    collect_proton_dirs || return 1
+    local proton_label
+    proton_label=$(printf '%s\n' "${PROTON_DIRS[@]##*/}" | \
+      fzf --prompt="Choose a Proton version to set up the prefix > " --height=40% --border)
+    if [ -z "$proton_label" ]; then
+      log_error "No Proton version selected — cannot set up the prefix."
+      return 1
+    fi
+    proton_path=$(printf '%s\n' "${PROTON_DIRS[@]}" | grep -F "/$proton_label")
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    local saved_gamedir
+    saved_gamedir=$(grep '^GAMEDIR=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
+    { [ -n "$saved_gamedir" ] && echo "GAMEDIR=$saved_gamedir"; echo "PROTONPATH=$proton_path"; } > "$CONFIG_FILE"
+    log_info "Favorite Proton saved: $proton_label"
+  fi
+
+  local manifest="$STEAM_ROOT/steamapps/appmanifest_480.acf"
+  local installdir
+  installdir=$(sed -nE 's/.*"installdir"[[:space:]]+"([^"]+)".*/\1/p' "$manifest" | head -n1)
+  local spacewar_dir="$STEAM_ROOT/steamapps/common/${installdir:-Spacewar}"
+  local spacewar_exe
+  spacewar_exe=$(find "$spacewar_dir" -name '*.exe' -type f 2>/dev/null | sort | head -n1)
+  if [ -z "$spacewar_exe" ]; then
+    log_error "Could not find a Spacewar executable in $spacewar_dir to set up the prefix."
+    return 1
+  fi
+
+  log_debug "Bootstrapping prefix with $spacewar_exe via $(basename "$proton_path")"
+  WINE="$proton_path/files/bin/wine64" \
+  WINESERVER="$proton_path/files/bin/wineserver" \
+  WINEPREFIX="$WINEPREFIX_PATH/" \
+  PROTONPATH="$proton_path" \
+  GAMEID=480 \
+  umu-run "$spacewar_exe" &>/dev/null &
+  local boot_pid=$!
+
+  local waited=0
+  while [ ! -d "$WINEPREFIX_PATH/pfx" ] && kill -0 "$boot_pid" 2>/dev/null; do
+    sleep 1
+    waited=$((waited + 1))
+    [ "$waited" -gt 180 ] && break
+  done
+
+  if [ -d "$WINEPREFIX_PATH/pfx" ]; then
+    log_info "Proton prefix created at $WINEPREFIX_PATH/pfx"
+    kill "$boot_pid" 2>/dev/null
+    wait "$boot_pid" 2>/dev/null
+    return 0
+  fi
+
+  log_error "Proton prefix setup timed out or failed."
+  kill "$boot_pid" 2>/dev/null
+  return 1
+}
+
+# ── Startup checks ─────────────────────────────────────────────────────────────
+if ! pgrep -x steam &>/dev/null; then
+  read -r -p "Steam is not running. Launch it now and wait? [Y/n] " ans
+  if [[ "$ans" == [nN] ]]; then
+    exit 1
+  fi
+  steam &>/dev/null &
+  log_info "Waiting for Steam to start…"
+  until pgrep -x steam &>/dev/null; do sleep 2; done
+  log_info "Steam is running."
+fi
+
+if [ ! -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; then
+  read -r -p "Spacewar (App 480) is not installed. Open Steam to install it and wait? [Y/n] " ans
+  if [[ "$ans" == [nN] ]]; then
+    exit 1
+  fi
+  steam "steam://install/480" &>/dev/null &
+  log_info "Waiting for Spacewar to finish installing…"
+  until [ -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; do sleep 3; done
+  log_info "Spacewar installed."
+fi
+
+ensure_proton_prefix || exit 1
+
+for arg in "$@"; do
+  case "$arg" in
+    -d) MANGOHUD=1 ;;
+    -s) SETUP=1 ;;
+    -p) SETUP_PROTON=1 ;;
+    -e) SETUP_ENV=1 ;;
+    -i) INSTALL_DEPS=1 ;;
+    -v) DEBUG=1 ;;
+    -r)
+      read -r -p "Reset config and clear all settings? [y/N] " confirm
+      [[ "$confirm" != [yY] ]] && exit 0
+      log_warn "Resetting all config at user's request"
+      rm -f "$CONFIG_FILE"
+      rm -rf "$GAMES_DIR"
+      echo "Config cleared."
+      exit 0
+      ;;
+    -h)
+      echo "Usage: MonkeyLauncher.sh [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  -s    Setup: set the game directory to scan for .exe files"
+      echo "  -p    Set favorite Proton version (saved, skips prompt on launch)"
+      echo "  -e    Open game settings page (per-game launch env vars + save dir)"
+      echo "  -i    Install dependencies into the Proton prefix via winetricks"
+      echo "  -r    Reset: clear all saved config"
+      echo "  -d    Enable MangoHud overlay"
+      echo "  -v    Verbose: show debug logs (also: MONKEYLAUNCHER_DEBUG=1)"
+      echo "  -h    Show this help message"
+      echo ""
+      echo "Config:  $CONFIG_FILE"
+      echo "Saves:   $SAVES_BASE/"
+      echo "Logs:    $LOG_FILE"
+      exit 0
+      ;;
+  esac
+done
 
 # --- Setup game directory ---
 if [ "$SETUP" -eq 1 ]; then

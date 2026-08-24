@@ -23,8 +23,23 @@ echo -e "${BOLD}  MonkeyLauncher Installer${NC}"
 echo "  ========================"
 echo ""
 
+# ── Detect distribution ────────────────────────────────────────────────────────
+section "Detecting distribution…"
+
+DISTRO_NAME="Unknown"
+if [ -f /etc/os-release ]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  DISTRO_NAME="${PRETTY_NAME:-${NAME:-Unknown}}"
+else
+  warn "/etc/os-release not found — distribution name unknown, falling back to package-manager detection."
+fi
+ok "Distribution: $DISTRO_NAME"
+
 # ── Detect package manager ─────────────────────────────────────────────────────
-# On Arch: prefer AUR helpers (paru > yay) for AUR packages, fall back to pacman
+# On Arch: prefer AUR helpers (paru > yay) for AUR packages, fall back to pacman.
+# The package manager (not the distro name) drives which install commands run
+# below, since it covers derivatives (Manjaro, Nobara, Ubuntu flavors…) too.
 section "Detecting package manager…"
 
 AUR_HELPER=""
@@ -36,40 +51,42 @@ if command -v pacman &>/dev/null; then
   elif command -v yay  &>/dev/null; then AUR_HELPER="yay"
   fi
   if [ -n "$AUR_HELPER" ]; then
-    ok "Arch Linux — pacman + AUR helper: $AUR_HELPER"
+    ok "$DISTRO_NAME — pacman + AUR helper: $AUR_HELPER"
   else
-    ok "Arch Linux — pacman (no AUR helper found)"
-    warn "Some packages may be AUR-only (umu-launcher, mangohud)."
-    warn "Consider installing paru or yay for automatic AUR support."
+    ok "$DISTRO_NAME — pacman (no AUR helper found)"
+    warn "Some packages may be AUR-only. Consider installing paru or yay for automatic AUR support."
   fi
 elif command -v apt-get &>/dev/null; then
   PKG_MGR="apt"
-  ok "Debian/Ubuntu — apt"
+  ok "$DISTRO_NAME — apt"
 elif command -v dnf &>/dev/null; then
   PKG_MGR="dnf"
-  ok "Fedora/RHEL — dnf"
+  ok "$DISTRO_NAME — dnf"
 elif command -v zypper &>/dev/null; then
   PKG_MGR="zypper"
-  ok "openSUSE — zypper"
+  ok "$DISTRO_NAME — zypper"
 else
   PKG_MGR="unknown"
-  warn "Unknown package manager — you will need to install dependencies manually."
+  warn "Unknown package manager for $DISTRO_NAME — you will need to install dependencies manually."
 fi
 
 # install via AUR helper if available, else pacman/apt/dnf
 # usage: install_pkg <pacman> <apt> <dnf> <zypper>
 install_pkg() {
   local pacman="$1" apt="$2" dnf="$3" zypper="${4:-$3}"
+  # Each branch is allowed to fail (unknown package, no repo, …) without
+  # killing the whole script under `set -e` — callers check afterward
+  # (via `command -v`) whether the install actually worked.
   case "$PKG_MGR" in
     pacman)
       if [ -n "$AUR_HELPER" ]; then
-        $AUR_HELPER -S --noconfirm --needed --overwrite '*' $pacman
+        $AUR_HELPER -S --noconfirm --needed --overwrite '*' $pacman || true
       else
-        sudo pacman -S --noconfirm --needed --overwrite '*' $pacman
+        sudo pacman -S --noconfirm --needed --overwrite '*' $pacman || true
       fi ;;
-    apt)    sudo apt-get install -y "$apt"    ;;
-    dnf)    sudo dnf install -y    "$dnf"    ;;
-    zypper) sudo zypper install -y "$zypper" ;;
+    apt)    sudo apt-get install -y "$apt"    || true ;;
+    dnf)    sudo dnf install -y    "$dnf"    || true ;;
+    zypper) sudo zypper install -y "$zypper" || true ;;
     *)      warn "Install '$pacman' manually then re-run." ;;
   esac
 }
@@ -83,6 +100,25 @@ check_or_install() {
     install_pkg "$pacman" "$apt" "$dnf" "$zypper"
     command -v "$cmd" &>/dev/null && ok "$cmd" || fail "Failed to install $cmd"
   fi
+}
+
+# Like check_or_install, but never aborts the script on failure — used for
+# best-effort steps (e.g. build dependencies for umu-launcher from source)
+# where "not available on this distro" is an expected, recoverable outcome.
+try_install() {
+  local cmd="$1" pacman="$2" apt="$3" dnf="$4" zypper="${5:-$4}"
+  if command -v "$cmd" &>/dev/null; then
+    ok "$cmd"
+    return 0
+  fi
+  warn "$cmd not found — installing…"
+  install_pkg "$pacman" "$apt" "$dnf" "$zypper"
+  if command -v "$cmd" &>/dev/null; then
+    ok "$cmd"
+    return 0
+  fi
+  warn "Failed to install $cmd"
+  return 1
 }
 
 # ── Runtime dependencies ───────────────────────────────────────────────────────
@@ -104,26 +140,56 @@ else
   ok "protontricks"
 fi
 
-# mangohud: not in official apt/dnf repos — warn on non-Arch
-if command -v mangohud &>/dev/null; then
-  ok "mangohud"
-elif [ "$PKG_MGR" = "pacman" ]; then
-  warn "mangohud not found — installing…"
-  install_pkg mangohud mangohud mangohud mangohud
-  command -v mangohud &>/dev/null && ok "mangohud" || fail "Failed to install mangohud"
-else
-  warn "mangohud not in official repos for your distro — install it manually (https://github.com/flightlessmango/MangoHud) then re-run."
-fi
+# mangohud: official package on pacman/apt/dnf/zypper
+check_or_install mangohud mangohud mangohud mangohud mangohud
 
-# umu-launcher: AUR on Arch, unofficial on other distros
+# umu-launcher: official package on Arch (pacman), Nobara (dnf), openSUSE (zypper).
+# Elsewhere (Debian/Ubuntu, vanilla Fedora…) there's no official package, so we
+# build it from source per the project's own instructions.
 if command -v umu-run &>/dev/null; then
   ok "umu-run"
-elif [ "$PKG_MGR" = "pacman" ]; then
-  warn "umu-launcher not found — installing…"
-  install_pkg umu-launcher umu-launcher umu-launcher umu-launcher
-  command -v umu-run &>/dev/null && ok "umu-run" || fail "Failed to install umu-launcher"
 else
-  warn "umu-launcher is not in official repos for your distro — install it manually (https://github.com/Open-Wine-Components/umu-launcher) then re-run."
+  warn "umu-run not found — trying the official package for $PKG_MGR…"
+  UMU_INSTALLED=0
+  case "$PKG_MGR" in
+    pacman) install_pkg umu-launcher umu-launcher umu-launcher umu-launcher ;;
+    dnf)    install_pkg umu-launcher umu-launcher umu-launcher umu-launcher ;;
+    zypper) install_pkg umu-launcher umu-launcher umu-launcher umu-launcher ;;
+  esac
+  command -v umu-run &>/dev/null && UMU_INSTALLED=1
+
+  if [ "$UMU_INSTALLED" -eq 1 ]; then
+    ok "umu-run"
+  else
+    section "No official umu-launcher package for $DISTRO_NAME — building from source…"
+    warn "This pulls in the Rust toolchain (cargo) if missing — may take a few minutes and a few hundred MB of disk."
+
+    UMU_BUILD_OK=1
+    try_install git   git   git   git   git   || UMU_BUILD_OK=0
+    try_install make  make  make  make  make  || UMU_BUILD_OK=0
+    try_install scdoc scdoc scdoc scdoc scdoc || UMU_BUILD_OK=0
+    try_install cargo rust  cargo cargo cargo || UMU_BUILD_OK=0
+
+    if [ "$UMU_BUILD_OK" -eq 1 ]; then
+      UMU_SRC_DIR="$(mktemp -d)"
+      if git clone --recurse-submodules --depth 1 \
+           https://github.com/Open-Wine-Components/umu-launcher "$UMU_SRC_DIR"; then
+        if ! ( cd "$UMU_SRC_DIR" && ./configure.sh --user-install && make && make install ); then
+          UMU_BUILD_OK=0
+        fi
+      else
+        UMU_BUILD_OK=0
+      fi
+      rm -rf "$UMU_SRC_DIR"
+    fi
+
+    if [ "$UMU_BUILD_OK" -eq 1 ] && command -v umu-run &>/dev/null; then
+      ok "umu-run (built from source) → $HOME/.local/bin/umu-run"
+    else
+      warn "Could not build umu-launcher automatically."
+      warn "Install it manually: https://github.com/Open-Wine-Components/umu-launcher"
+    fi
+  fi
 fi
 
 # umu-run + Python 3.14 compatibility: Python 3.14 introduced a built-in
