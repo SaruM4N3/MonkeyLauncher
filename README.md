@@ -31,6 +31,7 @@ Available as a **GTK3 GUI** and a **terminal CLI** (fzf-based).
 - Auto-detects all Proton versions installed across your Steam libraries
 - Save a favorite Proton version to skip the prompt on every launch
 - Per-game launch environment variables (e.g. `DRI_PRIME=1 GAMEMODE=1`)
+- List view or cover-art Preview view (GUI) — covers are looked up on the Steam store (no account/API key needed) and cached locally
 
 <summary><b>Save Management</b></summary>
 
@@ -154,8 +155,17 @@ All config is stored in `~/.config/MonkeyLauncher/`:
 ~/.config/MonkeyLauncher/
 ├── config          # global: GAMEDIR, PROTONPATH
 ├── games/          # per-game: LAUNCH_ENV, SAVEDIR
-└── saves/          # save files, symlinked from the Proton prefix
+├── saves/          # save files, symlinked from the Proton prefix
+├── covers/         # cached cover art (GUI Preview view)
+└── logs/           # debug logs
 ```
+
+</details>
+
+<details>
+<summary><b>Debug Logs</b></summary>
+
+Both the GUI and CLI log to colored console output plus a persistent, rotating file in `~/.config/MonkeyLauncher/logs/`. Verbose (debug-level) logging is off by default — enable it with `-v` (CLI) / `--debug` (GUI), or `MONKEYLAUNCHER_DEBUG=1`.
 
 </details>
 
@@ -184,7 +194,12 @@ Output lands in `dist/`. The GUI binary still requires `python3-gobject` + GTK3 
 <summary><b>Directory Layout</b></summary>
 
 ```
-src/                  source files (GUI, CLI, icon, desktop entry)
+src/
+├── MonkeyLauncherGUI.py    entry-point shim (from monkeylauncher.app import App)
+├── monkeylauncher/         GUI package: config, logging_setup, steam, covers, dialogs, main_window, app
+├── MonkeyLauncherCLI.sh    CLI (fzf-based)
+├── monkeylauncher.desktop
+└── logo.png
 docker/               Dockerfile and build entrypoint
 dist/                 build output (gitignored)
 install.sh

@@ -340,6 +340,10 @@ mkdir -p "$INSTALL_LIB" "$INSTALL_BIN"
 install -m 644 "$RESOURCES/MonkeyLauncherGUI.py" "$INSTALL_LIB/MonkeyLauncherGUI.py"
 ok "GUI script → $INSTALL_LIB/MonkeyLauncherGUI.py"
 
+rm -rf "$INSTALL_LIB/monkeylauncher"
+cp -r "$RESOURCES/monkeylauncher" "$INSTALL_LIB/monkeylauncher"
+ok "GUI package → $INSTALL_LIB/monkeylauncher/"
+
 # ── Install binaries ───────────────────────────────────────────────────────────
 section "Installing binaries…"
 
