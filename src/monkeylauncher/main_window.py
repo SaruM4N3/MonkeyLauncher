@@ -10,7 +10,7 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib, GdkPixbuf
 
 from .config import (
-    CONFIG_FILE, GAMEDIRS_FILE, GAMES_DIR, WINEPREFIX_PATH,
+    CONFIG_DIR, CONFIG_FILE, GAMEDIRS_FILE, GAMES_DIR, LOG_DIR, WINEPREFIX_PATH,
     game_config_path, game_save_path, get_exe_list,
     read_config, read_gamedirs, write_config, write_gamedirs,
 )
@@ -18,6 +18,29 @@ from .covers import cover_cache_path, default_game_name, fetch_cover
 from .dialogs import GameSettingsDialog, InstallDepsDialog, WINETRICKS_PACKAGES, show_error
 from .logging_setup import log
 from .steam import get_proton_dirs, setup_save_symlink
+
+def parse_launch_tokens(text, env):
+    """Parse a launch-options string (global or per-game) Steam-%command%-
+    style: KEY=VALUE tokens are applied to `env` in place, "%command%"
+    marks where the game's launch command goes, and every other token
+    before/after it becomes a prefix/suffix arg. Returns (prefix, suffix)."""
+    prefix, suffix = [], []
+    if not text:
+        return prefix, suffix
+    tokens = shlex.split(text)
+    if '%command%' in tokens:
+        idx = tokens.index('%command%')
+        before, after = tokens[:idx], tokens[idx + 1:]
+    else:
+        before, after = [], tokens
+    for toks, bucket in ((before, prefix), (after, suffix)):
+        for tok in toks:
+            if '=' in tok and not tok.startswith('-'):
+                k, v = tok.split('=', 1)
+                env[k] = v
+            else:
+                bucket.append(tok)
+    return prefix, suffix
 
 # ── Main window ────────────────────────────────────────────────────────────────
 class MonkeyLauncher(Gtk.ApplicationWindow):
@@ -174,6 +197,70 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
 
         self.stack.add_titled(lib_box, 'library', 'Library')
 
+        # ── Help page ─────────────────────────────────────────────────────────
+        help_scroll = Gtk.ScrolledWindow(vexpand=True)
+        help_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        help_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18, margin=16)
+
+        def add_help_section(title, body):
+            title_lbl = Gtk.Label(xalign=0)
+            title_lbl.set_markup(f'<b>{title}</b>')
+            help_box.pack_start(title_lbl, False, False, 0)
+            body_lbl = Gtk.Label(xalign=0, wrap=True)
+            body_lbl.set_markup(body)
+            help_box.pack_start(body_lbl, False, False, 0)
+
+        add_help_section("Library", (
+            "Click <b>+ Add game directory</b> to point MonkeyLauncher at a folder "
+            "containing your games — it scans recursively for executables.\n"
+            "Double-click a game (or select it and click <b>Launch</b>) to start it "
+            "through Proton.\n"
+            "Use the search bar to filter, <b>Show full path</b> to see the underlying "
+            "exe paths, <b>Preview</b> to switch to a cover-art grid view, and "
+            "<b>Show hidden</b> to reveal games you've removed from the list.\n"
+            "Right-click a game for <b>Game Settings</b> or to remove it from the "
+            "list; right-click a directory to rescan or remove it from the library.\n"
+            "<b>MangoHud</b> toggles the performance overlay for the next launch."
+        ))
+
+        add_help_section("Game Settings", (
+            "Open via the <b>Game Settings</b> button or right-click menu on a game.\n"
+            "<b>Display</b> — rename the game and set custom cover art.\n"
+            "<b>Compatibility</b> — per-game WINEDLLOVERRIDES: check a DLL to force "
+            "it native/builtin, or add your own.\n"
+            "<b>Launch Options</b> — see below.\n"
+            "<b>Save Directory</b> — point at the save path inside the Proton "
+            "prefix so MonkeyLauncher can symlink it to a stable location."
+        ))
+
+        add_help_section("Launch options", (
+            "<tt>KEY=VALUE</tt> tokens (e.g. <tt>GAMEMODE=1 DRI_PRIME=1</tt>) are "
+            "applied as environment variables for the launch.\n"
+            "Anything else is treated as a command-line token, Steam-style: put "
+            "<tt>%command%</tt> where the game's launch command should go, and put "
+            "wrapper programs before it, e.g. <tt>gamemoderun %command%</tt>.\n"
+            "If you leave out <tt>%command%</tt>, plain tokens (e.g. "
+            "<tt>-windowed -novid</tt>) are appended after the game instead.\n"
+            "You can mix all three freely, e.g. "
+            "<tt>PROTON_LOG=1 gamemoderun %command% -windowed</tt>."
+        ))
+
+        add_help_section("Settings tab", (
+            "<b>Proton</b> — pick which installed Proton/UMU build is used to "
+            "launch games, and set <b>Global launch options</b> (same syntax as "
+            "a game's Launch Options) applied to every game; per-game options "
+            "are layered on top and win on conflicting env vars.\n"
+            "<b>Installer</b> — run bundled Windows installers/redistributables "
+            "(e.g. DirectX, VC++) through Proton before playing.\n"
+            "<b>Dependencies</b> — install common winetricks packages.\n"
+            "<b>Advanced</b> — jump to the config/logs folders, or reset all "
+            "MonkeyLauncher config (game directories, Proton choice, per-game "
+            "settings); save files are kept."
+        ))
+
+        help_scroll.add(help_box)
+        self.stack.add_titled(help_scroll, 'help', 'Help')
+
         # ── Settings page (Steam-settings-style: sections left, content right) ──
         settings_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
 
@@ -191,13 +278,32 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         # to match the tallest one (Installer/Dependencies have long lists),
         # and without this the version row stretches/centers into that
         # extra space instead of staying put.
-        proton_box = Gtk.Box(spacing=8, margin=16)
+        proton_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=16)
         proton_box.set_valign(Gtk.Align.START)
-        proton_box.pack_start(Gtk.Label(label="Version:"), False, False, 0)
+
+        version_row = Gtk.Box(spacing=8)
+        version_row.pack_start(Gtk.Label(label="Version:"), False, False, 0)
         self.proton_combo = Gtk.ComboBoxText(hexpand=True)
         self._populate_proton_combo()
         self.proton_combo.connect('changed', self.on_proton_changed)
-        proton_box.pack_start(self.proton_combo, True, True, 0)
+        version_row.pack_start(self.proton_combo, True, True, 0)
+        proton_box.pack_start(version_row, False, False, 0)
+
+        global_opts_row = Gtk.Box(spacing=8)
+        global_opts_row.pack_start(Gtk.Label(label="Global launch options:"), False, False, 0)
+        self.global_launch_opts_entry = Gtk.Entry(
+            hexpand=True, placeholder_text="e.g. gamemoderun %command%")
+        self.global_launch_opts_entry.set_text(self.cfg.get('GLOBAL_LAUNCH_ENV', ''))
+        self.global_launch_opts_entry.connect('activate', self.on_global_launch_opts_changed)
+        self.global_launch_opts_entry.connect('focus-out-event', self.on_global_launch_opts_changed)
+        global_opts_row.pack_start(self.global_launch_opts_entry, True, True, 0)
+        proton_box.pack_start(global_opts_row, False, False, 0)
+        note = Gtk.Label(xalign=0, wrap=True)
+        note.set_markup('<small>Applied to every game, same syntax as a game\'s Launch '
+                        'Options (see Help). Per-game options are applied on top and '
+                        'win on conflicting env vars.</small>')
+        proton_box.pack_start(note, False, False, 0)
+
         self.settings_stack.add_titled(proton_box, 'proton', 'Proton')
 
         # ── Installer ──────────────────────────────────────────────────────────
@@ -263,6 +369,18 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
 
         # ── Advanced ───────────────────────────────────────────────────────────
         advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=16)
+
+        folders_row = Gtk.Box(spacing=8)
+        open_config_btn = Gtk.Button(label="Open config folder")
+        open_config_btn.connect('clicked', lambda _: subprocess.Popen(['xdg-open', str(CONFIG_DIR)]))
+        folders_row.pack_start(open_config_btn, False, False, 0)
+        open_logs_btn = Gtk.Button(label="Open logs folder")
+        open_logs_btn.connect('clicked', lambda _: subprocess.Popen(['xdg-open', str(LOG_DIR)]))
+        folders_row.pack_start(open_logs_btn, False, False, 0)
+        advanced_box.pack_start(folders_row, False, False, 0)
+
+        advanced_box.pack_start(Gtk.Separator(), False, False, 0)
+
         advanced_box.pack_start(Gtk.Label(
             label="Resetting clears all game directories, Proton preference, "
                   "and per-game settings.\nSave files are NOT deleted.",
@@ -629,34 +747,23 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             'DXVK_STATE_CACHE':  '1',
             'MANGOHUD':          '1' if self.mangohud else '0',
         })
-        # Per-game overrides applied after defaults so they take effect.
-        # KEY=VALUE tokens become env vars; everything else is treated as
-        # a command-line token, Steam-%command%-style: tokens before
-        # "%command%" wrap/prefix the launch command (e.g. "gamemoderun
-        # %command%"), tokens after it (or all of them, if %command% is
-        # omitted) are appended as extra args to the game.
-        prefix_args, suffix_args = [], []
-        if launch_env:
-            tokens = shlex.split(launch_env)
-            if '%command%' in tokens:
-                idx = tokens.index('%command%')
-                before, after = tokens[:idx], tokens[idx + 1:]
-            else:
-                before, after = [], tokens
+        # Global overrides applied first, per-game overrides applied after so
+        # they win on conflicting env vars. KEY=VALUE tokens become env vars;
+        # everything else is a command-line token, Steam-%command%-style:
+        # tokens before "%command%" wrap/prefix the launch command (e.g.
+        # "gamemoderun %command%"), tokens after it (or all of them, if
+        # %command% is omitted) are appended as extra args to the game.
+        # Global wrapping goes outermost, per-game innermost.
+        global_launch_env = self.cfg.get('GLOBAL_LAUNCH_ENV', '')
+        g_prefix, g_suffix = parse_launch_tokens(global_launch_env, env)
+        p_prefix, p_suffix = parse_launch_tokens(launch_env, env)
 
-            for toks, bucket in ((before, prefix_args), (after, suffix_args)):
-                for tok in toks:
-                    if '=' in tok and not tok.startswith('-'):
-                        k, v = tok.split('=', 1)
-                        env[k] = v
-                    else:
-                        bucket.append(tok)
-
-        cmd = prefix_args + ['umu-run', game_path] + suffix_args
+        cmd = g_prefix + p_prefix + ['umu-run', game_path] + p_suffix + g_suffix
 
         log.info(f"Launching {exe} via {proton.name}")
         log.debug(f"Launch command: {' '.join(cmd)}")
-        log.debug(f"Launch env overrides: {launch_env or '(none)'}, "
+        log.debug(f"Global launch overrides: {global_launch_env or '(none)'}, "
+                  f"per-game overrides: {launch_env or '(none)'}, "
                   f"savedir: {savedir or '(none)'}, mangohud: {self.mangohud}")
 
         proc = subprocess.Popen(cmd, env=env)
@@ -784,6 +891,11 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             self.cfg['PROTONPATH'] = str(self.proton_dirs[idx])
             write_config(CONFIG_FILE, self.cfg)
         self._check_installed_deps()
+
+    def on_global_launch_opts_changed(self, widget, _event=None):
+        self.cfg['GLOBAL_LAUNCH_ENV'] = self.global_launch_opts_entry.get_text().strip()
+        write_config(CONFIG_FILE, self.cfg)
+        return False
 
     def _check_installed_deps(self):
         for verb in self.winetricks_checks:
@@ -1028,4 +1140,5 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             self.cfg      = {}
             self.gamedirs = []
             self.store.clear()
+            self.global_launch_opts_entry.set_text('')
         dialog.destroy()
