@@ -286,9 +286,11 @@ class GameSettingsDialog(Gtk.Dialog):
                 if dll and mode:
                     dll_parts.append(f'{dll}={mode}')
 
-        env_parts = []
-        if dll_parts:
-            env_parts.append(f'WINEDLLOVERRIDES={";".join(dll_parts)}')
+        # Always record the WINEDLLOVERRIDES token, even empty — otherwise
+        # "explicitly no overrides" (every row unchecked) is indistinguishable
+        # from "never customized" once saved, and reopening resets every row
+        # back to checked.
+        env_parts = [f'WINEDLLOVERRIDES={";".join(dll_parts)}']
         extra = self.launch_opts_entry.get_text().strip()
         if extra:
             env_parts.append(extra)

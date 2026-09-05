@@ -807,7 +807,10 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             return
         dialog = GameSettingsDialog(self, exe)
         if dialog.run() == Gtk.ResponseType.OK:
-            write_config(game_config_path(exe), dialog.get_result())
+            result = dialog.get_result()
+            if read_config(game_config_path(exe)).get('HIDDEN') == '1':
+                result['HIDDEN'] = '1'
+            write_config(game_config_path(exe), result)
             self._refresh_game_row(exe, gamedir)
         dialog.destroy()
 
