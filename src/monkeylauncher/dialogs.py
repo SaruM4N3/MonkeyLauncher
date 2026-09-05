@@ -118,24 +118,35 @@ class GameSettingsDialog(Gtk.Dialog):
         fields_col.pack_start(name_row, False, False, 0)
         display_box.pack_start(fields_col, True, True, 0)
 
-        self.settings_stack.add_titled(display_box, 'display', 'Display')
+        self.settings_stack.add_titled(display_box, 'display', 'General')
 
-        # ── Compatibility (WINEDLLOVERRIDES) ──────────────────────────────────
+        # ── Launch (compatibility mode + WINEDLLOVERRIDES + launch options) ────
         compat_scroll = Gtk.ScrolledWindow()
         compat_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        compat_outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin=16)
+        compat_outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin=16, spacing=4)
 
-        self.offline_check = Gtk.CheckButton(
-            label="Offline game — just run `umu-run <exe>`, no custom environment")
-        self.offline_check.set_tooltip_text(
-            "Skips WINEDLLOVERRIDES, launch options, and the selected Proton/prefix "
-            "entirely — umu manages its own default Proton build and prefix instead, "
-            "exactly like running the exe bare from a terminal. Useful for games that "
-            "don't need the online-fix compatibility tricks and actually run worse "
-            "under the shared Proton prefix.")
-        self.offline_check.set_active(self.cfg.get('OFFLINE') == '1')
-        self.offline_check.connect('toggled', self.on_offline_toggled)
-        compat_outer.pack_start(self.offline_check, False, False, 0)
+        compat_outer.pack_start(
+            Gtk.Label(label="Compatibility mode", xalign=0), False, False, 0)
+        mode_row = Gtk.Box(spacing=12)
+        self.onlinefix_radio = Gtk.RadioButton.new_with_label_from_widget(None, "OnlineFix")
+        self.onlinefix_radio.set_tooltip_text(
+            "Runs through the shared Proton prefix with the WINEDLLOVERRIDES below "
+            "applied, so the cracked online-fix DLLs load in place of the real "
+            "Steamworks API.")
+        self.offline_radio = Gtk.RadioButton.new_with_label_from_widget(
+            self.onlinefix_radio, "Offline")
+        self.offline_radio.set_tooltip_text(
+            "Skips WINEDLLOVERRIDES and the selected Proton/shared prefix entirely — "
+            "umu manages its own default Proton build and prefix instead, exactly "
+            "like running the exe bare from a terminal. Launch options still apply. "
+            "Useful for games that don't need the online-fix compatibility tricks "
+            "and actually run worse under the shared Proton prefix.")
+        if self.cfg.get('OFFLINE') == '1':
+            self.offline_radio.set_active(True)
+        self.offline_radio.connect('toggled', self.on_offline_toggled)
+        mode_row.pack_start(self.onlinefix_radio, False, False, 0)
+        mode_row.pack_start(self.offline_radio,   False, False, 0)
+        compat_outer.pack_start(mode_row, False, False, 0)
         compat_outer.pack_start(Gtk.Separator(), False, False, 4)
 
         compat_outer.pack_start(
@@ -161,22 +172,21 @@ class GameSettingsDialog(Gtk.Dialog):
                                               self._dll_box.show_all()))
         self._dll_box.pack_start(add_btn, False, False, 0)
         compat_outer.pack_start(self._dll_box, False, False, 0)
-        compat_scroll.add(compat_outer)
-        self.settings_stack.add_titled(compat_scroll, 'compat', 'Compatibility')
 
-        # ── Launch options ────────────────────────────────────────────────────
-        opts_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin=16)
+        compat_outer.pack_start(Gtk.Separator(), False, False, 8)
+        compat_outer.pack_start(
+            Gtk.Label(label="Launch options", xalign=0), False, False, 4)
         opts_row = Gtk.Box(spacing=8)
-        opts_row.pack_start(Gtk.Label(label="Launch options:", xalign=0),
-                            False, False, 0)
         existing_extra = ' '.join(extra_tokens)
         self.launch_opts_entry = Gtk.Entry(hexpand=True,
                                            placeholder_text="e.g. GAMEMODE=1 DRI_PRIME=1")
         self.launch_opts_entry.set_text(existing_extra)
         opts_row.pack_start(self.launch_opts_entry, True, True, 0)
-        opts_box.pack_start(opts_row, False, False, 0)
-        self.settings_stack.add_titled(opts_box, 'launch', 'Launch Options')
-        self.on_offline_toggled(self.offline_check)
+        compat_outer.pack_start(opts_row, False, False, 0)
+
+        compat_scroll.add(compat_outer)
+        self.settings_stack.add_titled(compat_scroll, 'launch', 'Launch')
+        self.on_offline_toggled(self.offline_radio)
 
         # ── Save directory ────────────────────────────────────────────────────
         save_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=16)
@@ -204,9 +214,9 @@ class GameSettingsDialog(Gtk.Dialog):
         self.show_all()
 
     def on_offline_toggled(self, btn):
-        active = not btn.get_active()
-        self._dll_box.set_sensitive(active)
-        self.launch_opts_entry.set_sensitive(active)
+        # Launch options stay usable in both modes — only the WINEDLLOVERRIDES
+        # rows are OnlineFix-specific.
+        self._dll_box.set_sensitive(not self.offline_radio.get_active())
 
     def _add_dll_row(self, dll_name, mode, checked):
         row_box = Gtk.Box(spacing=6)
@@ -318,7 +328,7 @@ class GameSettingsDialog(Gtk.Dialog):
             'NAME':       self.name_entry.get_text().strip(),
             'LAUNCH_ENV': ' '.join(env_parts),
             'SAVEDIR':    self.save_entry.get_text().strip(),
-            'OFFLINE':    '1' if self.offline_check.get_active() else '',
+            'OFFLINE':    '1' if self.offline_radio.get_active() else '',
         }
 
 

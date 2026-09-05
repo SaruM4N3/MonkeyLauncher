@@ -7,7 +7,7 @@ from pathlib import Path
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GLib, GdkPixbuf
+from gi.repository import Gdk, Gtk, GLib, GdkPixbuf, Pango
 
 from .config import (
     CONFIG_DIR, CONFIG_FILE, GAMEDIRS_FILE, GAMES_DIR, LOG_DIR, WINEPREFIX_PATH,
@@ -19,7 +19,7 @@ from .dialogs import GameSettingsDialog, InstallDepsDialog, WINETRICKS_PACKAGES,
 from .logging_setup import log
 from .steam import get_proton_dirs, setup_save_symlink
 from .updater import (
-    CURRENT_VERSION, check_latest_release, is_dev_checkout, is_newer,
+    CURRENT_VERSION, REPO, check_latest_release, is_dev_checkout, is_newer,
     is_source_install, perform_source_update,
 )
 
@@ -62,25 +62,77 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         self._running_proc = None
         self._cover_fetch_running = False
         self._placeholder_cache = {}
+        self._update_info = None
 
         log.debug(f"Detected {len(self.proton_dirs)} Proton installation(s): "
                   f"{[d.name for d in self.proton_dirs]}")
 
         self._build_ui()
+        if self.cfg.get('VIEW') == 'grid':
+            # Gtk.Stack resets its visible child back to the first one added
+            # as soon as the window's show_all() runs, undoing any
+            # set_visible_child_name() made beforehand — so this has to be
+            # deferred until after the window is shown.
+            GLib.idle_add(self._restore_grid_view)
         self._load_games()
         self._check_installed_deps()
         self._load_installer_redist()
+        self._auto_check_updates()
 
     # ── UI construction ────────────────────────────────────────────────────────
+    def _nav_button(self, icon_name, label, group):
+        """A flat, icon+label radio button used as a header-bar page switch —
+        same idea as Gtk.StackSwitcher, but laid out ourselves so Library can
+        sit on the left and Help/Settings on the right, with the update
+        button centered between them."""
+        btn = Gtk.RadioButton.new_from_widget(group)
+        btn.set_mode(False)  # plain button look, no radio dot
+        btn.get_style_context().add_class('flat')
+        box = Gtk.Box(spacing=6)
+        box.pack_start(Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.BUTTON), False, False, 0)
+        box.pack_start(Gtk.Label(label=label), False, False, 0)
+        btn.add(box)
+        return btn
+
     def _build_ui(self):
         hb = Gtk.HeaderBar(show_close_button=True)
         self.set_titlebar(hb)
 
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
-        switcher = Gtk.StackSwitcher()
-        switcher.set_stack(self.stack)
-        hb.set_custom_title(switcher)
+
+        self.library_nav_btn  = self._nav_button('applications-games-symbolic', 'Library', None)
+        self.help_nav_btn     = self._nav_button('help-about-symbolic', 'Help', self.library_nav_btn)
+        self.settings_nav_btn = self._nav_button('preferences-system-symbolic', 'Settings',
+                                                 self.library_nav_btn)
+        self.library_nav_btn.set_active(True)
+        self.library_nav_btn.connect(
+            'toggled', lambda b: b.get_active() and self.stack.set_visible_child_name('library'))
+        self.help_nav_btn.connect(
+            'toggled', lambda b: b.get_active() and self.stack.set_visible_child_name('help'))
+        self.settings_nav_btn.connect(
+            'toggled', lambda b: b.get_active() and self.stack.set_visible_child_name('settings'))
+
+        hb.pack_start(self.library_nav_btn)
+        hb.pack_end(self.settings_nav_btn)
+        hb.pack_end(self.help_nav_btn)
+
+        self.update_now_btn = Gtk.Button(no_show_all=True)
+        self.update_now_btn.get_style_context().add_class('suggested-action')
+        update_css = Gtk.CssProvider()
+        update_css.load_from_data(b'button { background: #2ec27e; color: #fff; }')
+        self.update_now_btn.get_style_context().add_provider(
+            update_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.update_now_btn.connect('clicked', self.on_update_now_clicked)
+        update_box = Gtk.Box(spacing=6)
+        update_box.pack_start(
+            Gtk.Image.new_from_icon_name('software-update-available-symbolic', Gtk.IconSize.BUTTON),
+            False, False, 0)
+        self.update_now_label = Gtk.Label(label="Update now")
+        update_box.pack_start(self.update_now_label, False, False, 0)
+        self.update_now_btn.add(update_box)
+        hb.set_custom_title(self.update_now_btn)
+
         self.add(self.stack)
 
         # ── Library page ──────────────────────────────────────────────────────
@@ -101,8 +153,8 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         self.path_toggle.connect('toggled', self.on_path_toggle)
         search_bar.pack_start(self.path_toggle, False, False, 0)
 
-        self.view_toggle = Gtk.ToggleButton(label="Preview")
-        self.view_toggle.set_tooltip_text("Toggle between list and cover preview")
+        self.view_toggle = Gtk.ToggleButton(label="Grid")
+        self.view_toggle.set_tooltip_text("Toggle between list and grid view")
         self.view_toggle.connect('toggled', self.on_view_toggle)
         search_bar.pack_start(self.view_toggle, False, False, 0)
 
@@ -120,23 +172,28 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
 
         # TreeStore: col0=display, col1=exe_relpath (empty for dir rows),
-        # col2=gamedir, col3=hidden (dims the row; dir rows are always False)
-        self.store = Gtk.TreeStore(str, str, str, bool)
+        # col2=gamedir, col3=hidden (dims the row; dir rows are always False),
+        # col4=icon (folder icon for dir rows, cover-derived icon for games)
+        self.store = Gtk.TreeStore(str, str, str, bool, GdkPixbuf.Pixbuf)
         self.filter = self.store.filter_new()
         self.filter.set_visible_func(self._game_filter)
         self.tv = Gtk.TreeView(model=self.filter, headers_visible=False)
         game_col = Gtk.TreeViewColumn("Game")
+        icon_renderer = Gtk.CellRendererPixbuf()
+        game_col.pack_start(icon_renderer, False)
+        game_col.add_attribute(icon_renderer, 'pixbuf', 4)
+        game_col.set_cell_data_func(icon_renderer, self._render_hidden_dim, 3)
         game_renderer = Gtk.CellRendererText()
         game_col.pack_start(game_renderer, True)
         game_col.add_attribute(game_renderer, 'text', 0)
-        game_col.set_cell_data_func(game_renderer, self._render_hidden_dim)
+        game_col.set_cell_data_func(game_renderer, self._render_hidden_dim, 3)
         self.tv.append_column(game_col)
         self.tv.connect('row-activated', self.on_game_activated)
         self.tv.connect('button-press-event', self.on_tree_button_press)
         self.tv.get_selection().connect('changed', self.on_selection_changed)
         scroll.add(self.tv)
 
-        # ── Preview (grid) view ────────────────────────────────────────────────
+        # ── Grid (cover-art) view ──────────────────────────────────────────────
         grid_scroll = Gtk.ScrolledWindow(vexpand=True)
         grid_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
 
@@ -152,6 +209,12 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         self.icon_view.set_cell_data_func(pixbuf_renderer, self._render_hidden_dim)
         text_renderer = Gtk.CellRendererText()
         text_renderer.set_alignment(0.5, 0)
+        # Fixed single-line width regardless of what's shown — short names
+        # center within it, and long strings (e.g. "Show full path" in this
+        # view) ellipsize in the middle instead of wrapping into a tall,
+        # uneven cell that throws off the rest of the grid.
+        text_renderer.set_property('ellipsize', Pango.EllipsizeMode.MIDDLE)
+        text_renderer.set_property('width-chars', 15)
         self.icon_view.pack_start(text_renderer, True)
         self.icon_view.add_attribute(text_renderer, 'text', 1)
         self.icon_view.set_cell_data_func(text_renderer, self._render_hidden_dim)
@@ -202,72 +265,109 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         self.stack.add_titled(lib_box, 'library', 'Library')
 
         # ── Help page ─────────────────────────────────────────────────────────
+        help_css = Gtk.CssProvider()
+        help_css.load_from_data(b"""
+            .help-card {
+                background-color: alpha(@theme_fg_color, 0.05);
+                border-radius: 12px;
+            }
+        """)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), help_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
         help_scroll = Gtk.ScrolledWindow(vexpand=True)
         help_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        help_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18, margin=16)
+        help_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20, margin=24)
 
-        def add_help_section(title, body):
+        page_title = Gtk.Label(xalign=0)
+        page_title.set_markup('<span size="x-large" weight="bold">Help</span>')
+        help_box.pack_start(page_title, False, False, 0)
+        page_subtitle = Gtk.Label(
+            label="Everything you need to know about using MonkeyLauncher.", xalign=0)
+        page_subtitle.get_style_context().add_class('dim-label')
+        help_box.pack_start(page_subtitle, False, False, 4)
+
+        def add_help_section(title, bullets):
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=16)
+            card.get_style_context().add_class('help-card')
+
             title_lbl = Gtk.Label(xalign=0)
-            title_lbl.set_markup(f'<b>{title}</b>')
-            help_box.pack_start(title_lbl, False, False, 0)
-            body_lbl = Gtk.Label(xalign=0, wrap=True)
-            body_lbl.set_markup(body)
-            help_box.pack_start(body_lbl, False, False, 0)
+            title_lbl.set_markup(f'<span size="large" weight="bold">{title.upper()}:</span>')
+            card.pack_start(title_lbl, False, False, 0)
 
-        add_help_section("Library", (
+            list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            for item in bullets:
+                row = Gtk.Box(spacing=8)
+                bullet_lbl = Gtk.Label(label="•", xalign=0, valign=Gtk.Align.START)
+                row.pack_start(bullet_lbl, False, False, 0)
+                item_lbl = Gtk.Label(xalign=0, wrap=True, valign=Gtk.Align.START)
+                item_lbl.set_markup(item)
+                row.pack_start(item_lbl, True, True, 0)
+                list_box.pack_start(row, False, False, 0)
+            card.pack_start(list_box, False, False, 0)
+
+            help_box.pack_start(card, False, False, 0)
+
+        add_help_section("Library", [
             "Click <b>+ Add game directory</b> to point MonkeyLauncher at a folder "
-            "containing your games — it scans recursively for executables.\n"
+            "containing your games — it scans recursively for executables.",
             "Double-click a game (or select it and click <b>Launch</b>) to start it "
-            "through Proton.\n"
-            "Use the search bar to filter, <b>Show full path</b> to see the underlying "
-            "exe paths, <b>Preview</b> to switch to a cover-art grid view, and "
-            "<b>Show hidden</b> to reveal games you've removed from the list.\n"
+            "through Proton.",
+            "Use the search bar to filter games.",
+            "<b>Show full path</b> shows the underlying exe paths instead of the "
+            "display name.",
+            "<b>Grid</b> switches to a cover-art grid view — the list/grid choice "
+            "is remembered across restarts.",
+            "<b>Show hidden</b> reveals games you've removed from the list.",
             "Right-click a game for <b>Game Settings</b> or to remove it from the "
-            "list; right-click a directory to rescan or remove it from the library.\n"
-            "<b>MangoHud</b> toggles the performance overlay for the next launch."
-        ))
+            "list; right-click a directory to rescan or remove it from the library.",
+            "<b>MangoHud</b> toggles the performance overlay for the next launch.",
+        ])
 
-        add_help_section("Game Settings", (
-            "Open via the <b>Game Settings</b> button or right-click menu on a game.\n"
-            "<b>Display</b> — rename the game and set custom cover art.\n"
-            "<b>Compatibility</b> — per-game WINEDLLOVERRIDES: check a DLL to force "
-            "it native/builtin, or add your own. Check <b>Offline game</b> to bypass "
-            "all of that — DLL overrides, launch options, and the selected Proton/"
-            "shared prefix — and just run <tt>umu-run &lt;exe&gt;</tt> with no custom "
-            "environment, letting umu manage its own default Proton build and prefix "
-            "(same as running the exe bare from a terminal). Useful for games that "
-            "don't need the online-fix tricks and run worse under the shared prefix.\n"
-            "<b>Launch Options</b> — see below.\n"
+        add_help_section("Game Settings", [
+            "Open via the <b>Game Settings</b> button or right-click menu on a game.",
+            "<b>General</b> — rename the game and set custom cover art.",
+            "<b>Launch</b> — choose <b>OnlineFix</b> (default) to run through the "
+            "shared Proton prefix with the WINEDLLOVERRIDES below it applied: check "
+            "a DLL to force it native/builtin, or add your own.",
+            "Choose <b>Offline</b> to bypass DLL overrides and the selected "
+            "Proton/shared prefix, running <tt>umu-run &lt;exe&gt;</tt> with no "
+            "custom environment (same as running the exe bare from a terminal) — "
+            "useful for games that don't need the online-fix tricks and run worse "
+            "under the shared prefix.",
+            "Launch Options (further down the same tab) apply in both modes.",
             "<b>Save Directory</b> — point at the save path inside the Proton "
-            "prefix so MonkeyLauncher can symlink it to a stable location."
-        ))
+            "prefix so MonkeyLauncher can symlink it to a stable location.",
+        ])
 
-        add_help_section("Launch options", (
+        add_help_section("Launch options", [
             "<tt>KEY=VALUE</tt> tokens (e.g. <tt>GAMEMODE=1 DRI_PRIME=1</tt>) are "
-            "applied as environment variables for the launch.\n"
+            "applied as environment variables for the launch.",
             "Anything else is treated as a command-line token, Steam-style: put "
-            "<tt>%command%</tt> where the game's launch command should go, and put "
-            "wrapper programs before it, e.g. <tt>gamemoderun %command%</tt>.\n"
+            "<tt>%command%</tt> where the game's launch command should go, with "
+            "wrapper programs before it, e.g. <tt>gamemoderun %command%</tt>.",
             "If you leave out <tt>%command%</tt>, plain tokens (e.g. "
-            "<tt>-windowed -novid</tt>) are appended after the game instead.\n"
+            "<tt>-windowed -novid</tt>) are appended after the game instead.",
             "You can mix all three freely, e.g. "
-            "<tt>PROTON_LOG=1 gamemoderun %command% -windowed</tt>."
-        ))
+            "<tt>PROTON_LOG=1 gamemoderun %command% -windowed</tt>.",
+        ])
 
-        add_help_section("Settings tab", (
+        add_help_section("Settings tab", [
             "<b>Proton</b> — pick which installed Proton/UMU build is used to "
-            "launch games, and set <b>Global launch options</b> (same syntax as "
-            "a game's Launch Options) applied to every game; per-game options "
-            "are layered on top and win on conflicting env vars.\n"
-            "<b>Installer</b> — run bundled Windows installers/redistributables "
-            "(e.g. DirectX, VC++) through Proton before playing.\n"
-            "<b>Dependencies</b> — install common winetricks packages.\n"
+            "launch games.",
+            "<b>Global launch options</b> (same syntax as a game's Launch Options) "
+            "apply to every game; per-game options are layered on top and win on "
+            "conflicting env vars.",
+            "<b>Dependencies</b> — run bundled Windows installers/redistributables "
+            "(e.g. DirectX, VC++) through Proton, and install common winetricks "
+            "packages, before playing.",
             "<b>Advanced</b> — <b>Check for Updates</b> against the latest GitHub "
             "release (source installs can update in place from here; package "
-            "installs are pointed at their package manager instead); jump to "
-            "the config/logs folders; or reset all MonkeyLauncher config (game "
-            "directories, Proton choice, per-game settings) — save files are kept."
-        ))
+            "installs are pointed at their package manager instead); jump to the "
+            "config/logs folders; or reset all MonkeyLauncher config (game "
+            "directories, Proton choice, per-game settings) — save files are kept.",
+            "<b>Support</b> — star the project on GitHub, or report a bug.",
+        ])
 
         help_scroll.add(help_box)
         self.stack.add_titled(help_scroll, 'help', 'Help')
@@ -317,38 +417,38 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
 
         self.settings_stack.add_titled(proton_box, 'proton', 'Proton')
 
-        # ── Installer ──────────────────────────────────────────────────────────
-        inst_outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=16)
+        # ── Dependencies (installers + winetricks — both install things into
+        # the prefix before playing) ────────────────────────────────────────
+        deps_outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=16)
 
+        deps_outer.pack_start(Gtk.Label(label="Installers", xalign=0), False, False, 0)
         inst_top = Gtk.Box(spacing=8)
         self.installer_source_lbl = Gtk.Label(xalign=0, hexpand=True, wrap=True)
         inst_browse_btn = Gtk.Button(label="Browse directory…")
         inst_browse_btn.connect('clicked', self.on_installer_browse)
         inst_top.pack_start(self.installer_source_lbl, True, True, 0)
         inst_top.pack_start(inst_browse_btn, False, False, 0)
-        inst_outer.pack_start(inst_top, False, False, 0)
+        deps_outer.pack_start(inst_top, False, False, 0)
 
-        inst_scroll = Gtk.ScrolledWindow(vexpand=True)
+        inst_scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=120)
         inst_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.installer_checks = {}
         self.installer_status = {}
         self.installer_list = Gtk.ListBox()
         self.installer_list.set_selection_mode(Gtk.SelectionMode.NONE)
         inst_scroll.add(self.installer_list)
-        inst_outer.pack_start(inst_scroll, True, True, 0)
+        deps_outer.pack_start(inst_scroll, True, True, 0)
 
         self.installer_run_btn = Gtk.Button(label="Run selected")
         self.installer_run_btn.get_style_context().add_class('suggested-action')
         self.installer_run_btn.set_sensitive(False)
         self.installer_run_btn.connect('clicked', self.on_run_installer)
-        inst_outer.pack_start(self.installer_run_btn, False, False, 0)
+        deps_outer.pack_start(self.installer_run_btn, False, False, 0)
 
-        self.settings_stack.add_titled(inst_outer, 'installer', 'Installer')
+        deps_outer.pack_start(Gtk.Separator(), False, False, 8)
+        deps_outer.pack_start(Gtk.Label(label="Winetricks packages", xalign=0), False, False, 0)
 
-        # ── Dependencies (winetricks) ─────────────────────────────────────────
-        deps_outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=16)
-
-        deps_scroll = Gtk.ScrolledWindow(vexpand=True)
+        deps_scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=120)
         deps_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         deps_list = Gtk.ListBox()
         deps_list.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -412,6 +512,37 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         advanced_box.pack_start(reset_btn, False, False, 0)
         self.settings_stack.add_titled(advanced_box, 'advanced', 'Advanced')
 
+        # ── Support ────────────────────────────────────────────────────────────
+        support_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=16)
+        support_box.set_valign(Gtk.Align.START)
+
+        thanks_lbl = Gtk.Label(xalign=0, wrap=True)
+        thanks_lbl.set_markup(
+            "<b>Thanks for using MonkeyLauncher!</b>\n"
+            "It's a hobby project, built and maintained in my spare time — if it's "
+            "been useful to you, a star on GitHub genuinely helps and costs nothing.")
+        support_box.pack_start(thanks_lbl, False, False, 0)
+
+        star_btn = Gtk.Button(label="⭐ Star on GitHub")
+        star_btn.get_style_context().add_class('suggested-action')
+        star_btn.connect('clicked',
+            lambda _: subprocess.Popen(['xdg-open', f'https://github.com/{REPO}']))
+        support_box.pack_start(star_btn, False, False, 0)
+
+        support_box.pack_start(Gtk.Separator(), False, False, 8)
+
+        bug_lbl = Gtk.Label(
+            label="Found a bug, or a game that won't launch right? Let me know.",
+            xalign=0, wrap=True)
+        support_box.pack_start(bug_lbl, False, False, 0)
+
+        bug_btn = Gtk.Button(label="Report a Bug")
+        bug_btn.connect('clicked',
+            lambda _: subprocess.Popen(['xdg-open', f'https://github.com/{REPO}/issues/new']))
+        support_box.pack_start(bug_btn, False, False, 0)
+
+        self.settings_stack.add_titled(support_box, 'support', 'Support')
+
         self.stack.add_titled(settings_row, 'settings', 'Settings')
 
     def _display_name(self, exe, gcfg):
@@ -470,24 +601,45 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
     def _render_hidden_dim(self, cell_layout, cell, model, it, data=None):
         """Shared cell-data-func for both the list and grid views: dims
         deactivated ('Remove from list'-ed) games instead of hiding them
-        outright, so they can be found again and reactivated."""
-        hidden_col = model.get_n_columns() - 1
+        outright, so they can be found again and reactivated. `data` is the
+        hidden-flag column index (Stack passes it through from
+        set_cell_data_func); defaults to the model's last column."""
+        hidden_col = data if data is not None else model.get_n_columns() - 1
         cell.set_property('sensitive', not model[it][hidden_col])
 
     # ── Cover art ──────────────────────────────────────────────────────────────
-    def _placeholder_pixbuf(self, size=110):
-        if size in self._placeholder_cache:
-            return self._placeholder_cache[size]
-        try:
-            pixbuf = Gtk.IconTheme.get_default().load_icon(
-                'applications-games', size, Gtk.IconLookupFlags.FORCE_SIZE)
-        except GLib.Error:
-            pixbuf = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, size, size)
-            pixbuf.fill(0x33333380)
-        self._placeholder_cache[size] = pixbuf
-        return pixbuf
+    # Covers are always center-cropped to this portrait aspect ratio before
+    # scaling, whether they came from a 2:3 library cover or a landscape
+    # header/hero fallback — otherwise items end up different heights and
+    # rows/columns stop lining up.
+    COVER_ASPECT = 2 / 3
 
-    def _load_grid_pixbuf(self, path, size=110):
+    def _placeholder_pixbuf(self, size=110, aspect=None):
+        aspect = aspect if aspect is not None else self.COVER_ASPECT
+        key = (size, aspect)
+        if key in self._placeholder_cache:
+            return self._placeholder_cache[key]
+        height = max(1, int(size / aspect))
+        canvas = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, True, 8, size, height)
+        canvas.fill(0x2b2b2bff)
+        try:
+            icon_size = max(8, int(min(size, height) * 0.6))
+            icon = Gtk.IconTheme.get_default().load_icon(
+                'applications-games', icon_size, Gtk.IconLookupFlags.FORCE_SIZE)
+            x = (size - icon.get_width()) // 2
+            y = (height - icon.get_height()) // 2
+            icon.composite(canvas, x, y, icon.get_width(), icon.get_height(),
+                           x, y, 1.0, 1.0, GdkPixbuf.InterpType.BILINEAR, 255)
+        except GLib.Error:
+            pass
+        self._placeholder_cache[key] = canvas
+        return canvas
+
+    def _load_cover_pixbuf(self, path, size=110, aspect=None):
+        """Loads a cover image cropped to a fixed aspect ratio and scaled to
+        an exact size, so every item in a grid/list is pixel-identical
+        regardless of the source image's own proportions."""
+        aspect = aspect if aspect is not None else self.COVER_ASPECT
         try:
             pixbuf = GdkPixbuf.Pixbuf.new_from_file(str(path))
         except GLib.Error as e:
@@ -496,15 +648,69 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         w, h = pixbuf.get_width(), pixbuf.get_height()
         if w <= 0 or h <= 0:
             return None
-        # Not every game has a portrait cover — center-crop wide fallback
-        # art (Steam header/hero banners) so it doesn't render as a
-        # paper-thin sliver next to actual portrait covers.
-        if w / h > 1.4:
-            crop_w = int(h * 1.4)
+        if w / h > aspect:
+            crop_w = max(1, int(h * aspect))
             pixbuf = pixbuf.new_subpixbuf((w - crop_w) // 2, 0, crop_w, h)
             w = crop_w
-        scale = size / w
-        return pixbuf.scale_simple(size, max(1, int(h * scale)), GdkPixbuf.InterpType.BILINEAR)
+        else:
+            crop_h = max(1, int(w / aspect))
+            pixbuf = pixbuf.new_subpixbuf(0, (h - crop_h) // 2, w, crop_h)
+            h = crop_h
+        return pixbuf.scale_simple(size, max(1, int(size / aspect)), GdkPixbuf.InterpType.BILINEAR)
+
+    def _load_grid_pixbuf(self, path, size=110):
+        return self._load_cover_pixbuf(path, size)
+
+    def _list_icon_pixbuf_for(self, exe, size=24):
+        """Small square-ish icon for the list view, left of the game name."""
+        cache_path = cover_cache_path(exe)
+        if cache_path.exists():
+            pixbuf = self._load_cover_pixbuf(cache_path, size, aspect=1.0)
+            if pixbuf:
+                return self._apply_mode_badge(pixbuf, exe)
+        return self._apply_mode_badge(self._placeholder_pixbuf(size, aspect=1.0), exe)
+
+    def _mode_badge_icon(self, offline, size):
+        key = ('badge', offline, size)
+        if key in self._placeholder_cache:
+            return self._placeholder_cache[key]
+        icon_name = 'network-offline-symbolic' if offline else 'network-transmit-receive-symbolic'
+        try:
+            icon = Gtk.IconTheme.get_default().load_icon(icon_name, size, Gtk.IconLookupFlags.FORCE_SIZE)
+        except GLib.Error:
+            icon = None
+        self._placeholder_cache[key] = icon
+        return icon
+
+    def _apply_mode_badge(self, pixbuf, exe):
+        """Stamps a small badge on the bottom-right corner of a cover/icon
+        pixbuf showing whether the game launches through OnlineFix (the
+        shared Proton prefix + WINEDLLOVERRIDES) or Offline (umu's own
+        default Proton/prefix, no overrides) — see the Launch tab in Game
+        Settings."""
+        offline = read_config(game_config_path(exe)).get('OFFLINE') == '1'
+        size = max(10, int(min(pixbuf.get_width(), pixbuf.get_height()) * 0.28))
+        badge = self._mode_badge_icon(offline, size)
+        if not badge:
+            return pixbuf
+        pixbuf = pixbuf.copy()
+        if not pixbuf.get_has_alpha():
+            pixbuf = pixbuf.add_alpha(False, 0, 0, 0)
+        x = pixbuf.get_width() - badge.get_width() - 2
+        y = pixbuf.get_height() - badge.get_height() - 2
+        badge.composite(pixbuf, x, y, badge.get_width(), badge.get_height(),
+                        x, y, 1.0, 1.0, GdkPixbuf.InterpType.BILINEAR, 255)
+        return pixbuf
+
+    def _folder_icon_pixbuf(self, size=24):
+        if 'folder' not in self._placeholder_cache:
+            try:
+                pixbuf = Gtk.IconTheme.get_default().load_icon(
+                    'folder', size, Gtk.IconLookupFlags.FORCE_SIZE)
+            except GLib.Error:
+                pixbuf = self._placeholder_pixbuf(size, aspect=1.0)
+            self._placeholder_cache['folder'] = pixbuf
+        return self._placeholder_cache['folder']
 
     def _grid_pixbuf_for(self, exe):
         """Loads an already-cached cover for a fresh grid row, if there is
@@ -516,8 +722,8 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         if cache_path.exists():
             pixbuf = self._load_grid_pixbuf(cache_path)
             if pixbuf:
-                return pixbuf
-        return self._placeholder_pixbuf()
+                return self._apply_mode_badge(pixbuf, exe)
+        return self._apply_mode_badge(self._placeholder_pixbuf(), exe)
 
     def _start_cover_fetch(self):
         if self._cover_fetch_running:
@@ -542,10 +748,21 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
     def _apply_cover(self, exe, gamedir, path):
         pixbuf = self._load_grid_pixbuf(path)
         if pixbuf:
+            pixbuf = self._apply_mode_badge(pixbuf, exe)
             for row in self.grid_store:
                 if row[2] == exe and row[3] == gamedir:
                     row[0] = pixbuf
                     break
+
+        list_icon = self._list_icon_pixbuf_for(exe)
+        it = self.store.get_iter_first()
+        while it:
+            child = self.store.iter_children(it)
+            while child:
+                if self.store[child][1] == exe and self.store[child][2] == gamedir:
+                    self.store[child][4] = list_icon
+                child = self.store.iter_next(child)
+            it = self.store.iter_next(it)
         return False
 
     # ── Data loading ───────────────────────────────────────────────────────────
@@ -577,16 +794,16 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         log.info(f"Found {total} game(s) across {len(results)} director(y/ies)")
         self.grid_store.clear()
         for gamedir, exes in results:
-            parent = self.store.append(None, [Path(gamedir).name, '', gamedir, False])
+            parent = self.store.append(
+                None, [Path(gamedir).name, '', gamedir, False, self._folder_icon_pixbuf()])
             for exe, gcfg, gdir in exes:
                 display = self._display_name(exe, gcfg)
                 hidden  = gcfg.get('HIDDEN') == '1'
-                self.store.append(parent, [display, exe, gdir, hidden])
+                self.store.append(parent, [display, exe, gdir, hidden, self._list_icon_pixbuf_for(exe)])
                 self.grid_store.append([self._grid_pixbuf_for(exe), display, exe, gdir, hidden])
         self.tv.expand_all()
         self.spinner.stop()
-        if self.view_stack.get_visible_child_name() == 'grid':
-            self._start_cover_fetch()
+        self._start_cover_fetch()
         return False  # remove from idle queue
 
     def _selected_game(self):
@@ -614,6 +831,10 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         self.tv.expand_all()
         self.grid_filter.refilter()
 
+    def _restore_grid_view(self):
+        self.view_toggle.set_active(True)
+        return False
+
     def on_view_toggle(self, btn):
         if btn.get_active():
             self.view_stack.set_visible_child_name('grid')
@@ -621,8 +842,10 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             self._start_cover_fetch()
         else:
             self.view_stack.set_visible_child_name('list')
-            btn.set_label("Preview")
+            btn.set_label("Grid")
         self.on_selection_changed(None)
+        self.cfg['VIEW'] = 'grid' if btn.get_active() else 'list'
+        write_config(CONFIG_FILE, self.cfg)
 
     def on_show_hidden_toggle(self, btn):
         self.show_hidden = btn.get_active()
@@ -758,12 +981,18 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
                 log.warning(f"Save symlink warning for {exe}: {e}")
 
         if offline:
-            # Offline game: run exactly `umu-run <exe>` with no custom
-            # environment at all — no forced WINE/WINEPREFIX/GAMEID/
-            # PROTONPATH — so umu manages its own default Proton build,
+            # Offline game: no forced WINE/WINEPREFIX/GAMEID/PROTONPATH/
+            # WINEDLLOVERRIDES — umu manages its own default Proton build,
             # prefix, and runtime, same as running it bare from a terminal.
+            # Launch options (global and per-game) still apply; only the
+            # saved WINEDLLOVERRIDES token (OnlineFix-specific) is dropped.
             env = os.environ.copy()
-            cmd = ['umu-run', game_path]
+            offline_launch_env = ' '.join(
+                tok for tok in launch_env.split() if not tok.startswith('WINEDLLOVERRIDES='))
+            global_launch_env = self.cfg.get('GLOBAL_LAUNCH_ENV', '')
+            g_prefix, g_suffix = parse_launch_tokens(global_launch_env, env)
+            p_prefix, p_suffix = parse_launch_tokens(offline_launch_env, env)
+            cmd = g_prefix + p_prefix + ['umu-run', game_path] + p_suffix + g_suffix
         else:
             proton = self._selected_proton()
             if not proton:
@@ -843,12 +1072,14 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         gcfg = read_config(game_config_path(exe))
         display = self._display_name(exe, gcfg)
 
+        list_icon = self._list_icon_pixbuf_for(exe)
         it = self.store.get_iter_first()
         while it:
             child = self.store.iter_children(it)
             while child:
                 if self.store[child][1] == exe:
                     self.store[child][0] = display
+                    self.store[child][4] = list_icon
                 child = self.store.iter_next(child)
             it = self.store.iter_next(it)
 
@@ -859,8 +1090,7 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
                 row[1] = display
                 break
 
-        if self.view_stack.get_visible_child_name() == 'grid':
-            self._start_cover_fetch()
+        self._start_cover_fetch()
 
     def on_add_game_dir(self, _):
         dialog = Gtk.FileChooserDialog(
@@ -906,7 +1136,8 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
                     self.store.remove(self.store.iter_children(it))
                 for exe, gcfg in exes:
                     hidden = gcfg.get('HIDDEN') == '1'
-                    self.store.append(it, [self._display_name(exe, gcfg), exe, gamedir, hidden])
+                    self.store.append(it, [self._display_name(exe, gcfg), exe, gamedir, hidden,
+                                           self._list_icon_pixbuf_for(exe)])
                 self.tv.expand_row(self.store.get_path(it), False)
                 break
             it = self.store.iter_next(it)
@@ -923,8 +1154,7 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
                 [self._grid_pixbuf_for(exe), self._display_name(exe, gcfg), exe, gamedir, hidden])
 
         self.spinner.stop()
-        if self.view_stack.get_visible_child_name() == 'grid':
-            self._start_cover_fetch()
+        self._start_cover_fetch()
         return False
 
     def on_proton_changed(self, combo):
@@ -1167,6 +1397,35 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
         return False
 
     # ── Updates ────────────────────────────────────────────────────────────────
+    def _auto_check_updates(self):
+        """Silent version check run at launch — unlike on_check_updates,
+        never shows a dialog on its own; it just reveals the green 'Update
+        now' button on the Library page when a newer release exists."""
+        log.debug("Checking GitHub for the latest release (startup check)")
+
+        def worker():
+            try:
+                info = check_latest_release()
+            except Exception as e:
+                log.debug(f"Startup update check failed (ignored): {e}")
+                return
+            GLib.idle_add(self._on_auto_update_checked, info)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_auto_update_checked(self, info):
+        if is_newer(info['version']):
+            log.info(f"Update available: {CURRENT_VERSION} → {info['version']}")
+            self._update_info = info
+            self.update_now_btn.show()
+        else:
+            log.debug(f"Up to date (current {CURRENT_VERSION}, latest {info['version']})")
+        return False
+
+    def on_update_now_clicked(self, _):
+        if self._update_info:
+            self._prompt_update(self._update_info)
+
     def on_check_updates(self, _):
         self.update_btn.set_sensitive(False)
         self.update_btn.set_label("Checking…")
@@ -1191,6 +1450,8 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             return False
         if not is_newer(info['version']):
             log.info(f"Up to date (current {CURRENT_VERSION}, latest {info['version']})")
+            self._update_info = None
+            self.update_now_btn.hide()
             d = Gtk.MessageDialog(
                 transient_for=self, flags=0,
                 message_type=Gtk.MessageType.INFO,
@@ -1201,6 +1462,8 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             return False
 
         log.info(f"Update available: {CURRENT_VERSION} → {info['version']}")
+        self._update_info = info
+        self.update_now_btn.show()
         self._prompt_update(info)
         return False
 
@@ -1225,6 +1488,8 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
     def _run_update(self, info):
         self.update_btn.set_sensitive(False)
         self.update_btn.set_label("Updating…")
+        self.update_now_btn.set_sensitive(False)
+        self.update_now_label.set_text("Updating…")
         log.info(f"Downloading and installing update {info['version']}")
 
         def worker():
@@ -1240,10 +1505,14 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
     def _update_done(self, error):
         self.update_btn.set_sensitive(True)
         self.update_btn.set_label("Check for Updates")
+        self.update_now_btn.set_sensitive(True)
+        self.update_now_label.set_text("Update now")
         if error:
             log.error(f"Update failed: {error}")
             show_error(self, f"Update failed:\n{error}")
             return False
+        self._update_info = None
+        self.update_now_btn.hide()
         log.info("Update installed — restart required")
         d = Gtk.MessageDialog(
             transient_for=self, flags=0,

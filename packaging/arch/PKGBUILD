@@ -1,6 +1,6 @@
 # Maintainer: SaruM4N3
 pkgname=monkeylauncher
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="A launcher for online-fix Windows games on Linux, built on umu-launcher and Proton"
 arch=('any')
