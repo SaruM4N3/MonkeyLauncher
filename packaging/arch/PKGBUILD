@@ -35,6 +35,7 @@ package() {
   cp -r "$repo/src/monkeylauncher" "$pkgdir/usr/lib/monkeylauncher/monkeylauncher"
   find "$pkgdir/usr/lib/monkeylauncher/monkeylauncher" -type d -exec chmod 755 {} +
   find "$pkgdir/usr/lib/monkeylauncher/monkeylauncher" -type f -exec chmod 644 {} +
+  install -m644 "$repo/VERSION" "$pkgdir/usr/lib/monkeylauncher/VERSION"
 
   install -d "$pkgdir/usr/bin"
   install -m755 "$repo/src/MonkeyLauncherCLI.sh" "$pkgdir/usr/bin/MonkeyLauncherCLI"

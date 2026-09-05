@@ -344,6 +344,9 @@ rm -rf "$INSTALL_LIB/monkeylauncher"
 cp -r "$RESOURCES/monkeylauncher" "$INSTALL_LIB/monkeylauncher"
 ok "GUI package → $INSTALL_LIB/monkeylauncher/"
 
+install -m 644 "$(dirname "$0")/VERSION" "$INSTALL_LIB/VERSION"
+ok "VERSION → $INSTALL_LIB/VERSION"
+
 # ── Install binaries ───────────────────────────────────────────────────────────
 section "Installing binaries…"
 

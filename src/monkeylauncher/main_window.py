@@ -18,6 +18,10 @@ from .covers import cover_cache_path, default_game_name, fetch_cover
 from .dialogs import GameSettingsDialog, InstallDepsDialog, WINETRICKS_PACKAGES, show_error
 from .logging_setup import log
 from .steam import get_proton_dirs, setup_save_symlink
+from .updater import (
+    CURRENT_VERSION, check_latest_release, is_dev_checkout, is_newer,
+    is_source_install, perform_source_update,
+)
 
 def parse_launch_tokens(text, env):
     """Parse a launch-options string (global or per-game) Steam-%command%-
@@ -253,9 +257,11 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             "<b>Installer</b> — run bundled Windows installers/redistributables "
             "(e.g. DirectX, VC++) through Proton before playing.\n"
             "<b>Dependencies</b> — install common winetricks packages.\n"
-            "<b>Advanced</b> — jump to the config/logs folders, or reset all "
-            "MonkeyLauncher config (game directories, Proton choice, per-game "
-            "settings); save files are kept."
+            "<b>Advanced</b> — <b>Check for Updates</b> against the latest GitHub "
+            "release (source installs can update in place from here; package "
+            "installs are pointed at their package manager instead); jump to "
+            "the config/logs folders; or reset all MonkeyLauncher config (game "
+            "directories, Proton choice, per-game settings) — save files are kept."
         ))
 
         help_scroll.add(help_box)
@@ -369,6 +375,16 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
 
         # ── Advanced ───────────────────────────────────────────────────────────
         advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=16)
+
+        update_row = Gtk.Box(spacing=8)
+        self.version_lbl = Gtk.Label(label=f"Version {CURRENT_VERSION}", xalign=0, hexpand=True)
+        update_row.pack_start(self.version_lbl, True, True, 0)
+        self.update_btn = Gtk.Button(label="Check for Updates")
+        self.update_btn.connect('clicked', self.on_check_updates)
+        update_row.pack_start(self.update_btn, False, False, 0)
+        advanced_box.pack_start(update_row, False, False, 0)
+
+        advanced_box.pack_start(Gtk.Separator(), False, False, 0)
 
         folders_row = Gtk.Box(spacing=8)
         open_config_btn = Gtk.Button(label="Open config folder")
@@ -1121,6 +1137,94 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
     def _uncheck_installer(self, exe_path):
         if exe_path in self.installer_checks:
             self.installer_checks[exe_path].set_active(False)
+        return False
+
+    # ── Updates ────────────────────────────────────────────────────────────────
+    def on_check_updates(self, _):
+        self.update_btn.set_sensitive(False)
+        self.update_btn.set_label("Checking…")
+        log.debug("Checking GitHub for the latest release")
+
+        def worker():
+            try:
+                info = check_latest_release()
+            except Exception as e:
+                GLib.idle_add(self._show_update_result, None, str(e))
+                return
+            GLib.idle_add(self._show_update_result, info, None)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_update_result(self, info, error):
+        self.update_btn.set_sensitive(True)
+        self.update_btn.set_label("Check for Updates")
+        if error:
+            log.error(f"Update check failed: {error}")
+            show_error(self, f"Could not check for updates:\n{error}")
+            return False
+        if not is_newer(info['version']):
+            log.info(f"Up to date (current {CURRENT_VERSION}, latest {info['version']})")
+            d = Gtk.MessageDialog(
+                transient_for=self, flags=0,
+                message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK,
+                text="You're up to date")
+            d.format_secondary_text(f"MonkeyLauncher {CURRENT_VERSION} is the latest version.")
+            d.run(); d.destroy()
+            return False
+
+        log.info(f"Update available: {CURRENT_VERSION} → {info['version']}")
+        self._prompt_update(info)
+        return False
+
+    def _prompt_update(self, info):
+        can_auto_update = is_source_install() and not is_dev_checkout()
+        d = Gtk.MessageDialog(
+            transient_for=self, flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f"Update available: {info['version']}")
+        d.format_secondary_text(info['body'].strip()[:2000] or "(no changelog provided)")
+        d.add_button("Later", Gtk.ResponseType.CANCEL)
+        d.add_button("Update Now" if can_auto_update else "Open Releases Page", Gtk.ResponseType.OK)
+        response = d.run(); d.destroy()
+        if response != Gtk.ResponseType.OK:
+            return
+        if can_auto_update:
+            self._run_update(info)
+        else:
+            subprocess.Popen(['xdg-open', info['html_url']])
+
+    def _run_update(self, info):
+        self.update_btn.set_sensitive(False)
+        self.update_btn.set_label("Updating…")
+        log.info(f"Downloading and installing update {info['version']}")
+
+        def worker():
+            try:
+                perform_source_update(info['tarball_url'])
+            except Exception as e:
+                GLib.idle_add(self._update_done, str(e))
+                return
+            GLib.idle_add(self._update_done, None)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _update_done(self, error):
+        self.update_btn.set_sensitive(True)
+        self.update_btn.set_label("Check for Updates")
+        if error:
+            log.error(f"Update failed: {error}")
+            show_error(self, f"Update failed:\n{error}")
+            return False
+        log.info("Update installed — restart required")
+        d = Gtk.MessageDialog(
+            transient_for=self, flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="Update installed")
+        d.format_secondary_text("Restart MonkeyLauncher to use the new version.")
+        d.run(); d.destroy()
         return False
 
     def on_reset(self, _):

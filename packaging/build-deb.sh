@@ -20,6 +20,7 @@ install -m644 "$ROOT/src/MonkeyLauncherGUI.py" "$STAGE/usr/lib/monkeylauncher/Mo
 cp -r "$ROOT/src/monkeylauncher" "$STAGE/usr/lib/monkeylauncher/monkeylauncher"
 find "$STAGE/usr/lib/monkeylauncher/monkeylauncher" -type d -exec chmod 755 {} +
 find "$STAGE/usr/lib/monkeylauncher/monkeylauncher" -type f -exec chmod 644 {} +
+install -m644 "$ROOT/VERSION" "$STAGE/usr/lib/monkeylauncher/VERSION"
 
 install -d "$STAGE/usr/bin"
 install -m755 "$ROOT/src/MonkeyLauncherCLI.sh" "$STAGE/usr/bin/MonkeyLauncherCLI"
