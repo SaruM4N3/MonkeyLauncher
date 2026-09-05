@@ -80,6 +80,41 @@ def run_through_proton(exe_path, proton_path):
     log.info(f"Running installer via Proton: {exe_path} (proton={proton_path.name})")
     subprocess.Popen(['umu-run', exe_path], env=env, cwd=os.path.dirname(exe_path))
 
+def sync_steamclient_files():
+    """Copies the real Valve steamclient files into the shared prefix's fake
+    Steam install (drive_c/Program Files (x86)/Steam/).
+
+    Real Steam does this itself via Proton whenever STEAM_COMPAT_CLIENT_INSTALL_PATH
+    is set, which is how it normally ends up there. But umu-run, invoked as a
+    plain CLI command (`umu-run <exe>`, as we do), resets that variable to an
+    empty string internally before it ever reaches Proton — so Proton never
+    performs this copy for any prefix set up or run through umu-run. Without
+    it, OnlineFix (and other Goldberg-style Steam emulators) can't find the
+    "original" steamclient to fall back to for calls they don't implement,
+    and fail with "steamclient not found". Safe to call any time; just
+    re-copies over whatever's there.
+    """
+    legacycompat = STEAM_ROOT / 'legacycompat'
+    dest = WINEPREFIX_PATH / 'pfx' / 'drive_c' / 'Program Files (x86)' / 'Steam'
+    files = [
+        ('steamclient.dll',          'steamclient.dll'),
+        ('steamclient64.dll',        'steamclient64.dll'),
+        ('GameOverlayRenderer64.dll', 'GameOverlayRenderer64.dll'),
+        ('SteamService.exe',         'steam.exe'),
+        ('Steam.dll',                'Steam.dll'),
+    ]
+    if not (WINEPREFIX_PATH / 'pfx').is_dir():
+        return
+    dest.mkdir(parents=True, exist_ok=True)
+    for src, tgt in files:
+        srcfile = legacycompat / src
+        if srcfile.is_file():
+            try:
+                shutil.copy2(srcfile, dest / tgt)
+            except Exception as e:
+                log.warning(f"Could not copy {src} into prefix Steam dir: {e}")
+    log.debug(f"Synced steamclient files into {dest}")
+
 def bootstrap_proton_prefix(proton_path):
     """Creates the shared compatdata/480 prefix by launching Spacewar once
     through the given Proton, then killing it as soon as the prefix

@@ -9,7 +9,8 @@ from .config import CONFIG_FILE, WINEPREFIX_PATH, read_config, write_config
 from .dialogs import show_error
 from .logging_setup import log
 from .main_window import MonkeyLauncher
-from .steam import bootstrap_proton_prefix, check_app480_installed, check_steam_running, get_proton_dirs
+from .steam import (bootstrap_proton_prefix, check_app480_installed, check_steam_running,
+                    get_proton_dirs, sync_steamclient_files)
 
 # ── Startup checks ─────────────────────────────────────────────────────────────
 def wait_for_steam(parent=None):
@@ -143,6 +144,8 @@ def run_startup_checks(parent=None):
             show_error(parent, "Could not set up the Proton prefix automatically.\n"
                                 "Try a different Proton version, or launch Spacewar once from Steam.")
             return False
+
+    sync_steamclient_files()
 
     log.debug("Startup checks passed")
     return True
