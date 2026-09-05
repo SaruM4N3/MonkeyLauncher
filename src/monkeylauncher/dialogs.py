@@ -124,6 +124,20 @@ class GameSettingsDialog(Gtk.Dialog):
         compat_scroll = Gtk.ScrolledWindow()
         compat_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         compat_outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin=16)
+
+        self.offline_check = Gtk.CheckButton(
+            label="Offline game — just run `umu-run <exe>`, no custom environment")
+        self.offline_check.set_tooltip_text(
+            "Skips WINEDLLOVERRIDES, launch options, and the selected Proton/prefix "
+            "entirely — umu manages its own default Proton build and prefix instead, "
+            "exactly like running the exe bare from a terminal. Useful for games that "
+            "don't need the online-fix compatibility tricks and actually run worse "
+            "under the shared Proton prefix.")
+        self.offline_check.set_active(self.cfg.get('OFFLINE') == '1')
+        self.offline_check.connect('toggled', self.on_offline_toggled)
+        compat_outer.pack_start(self.offline_check, False, False, 0)
+        compat_outer.pack_start(Gtk.Separator(), False, False, 4)
+
         compat_outer.pack_start(
             Gtk.Label(label="WINEDLLOVERRIDES", xalign=0), False, False, 4)
         self._dll_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -162,6 +176,7 @@ class GameSettingsDialog(Gtk.Dialog):
         opts_row.pack_start(self.launch_opts_entry, True, True, 0)
         opts_box.pack_start(opts_row, False, False, 0)
         self.settings_stack.add_titled(opts_box, 'launch', 'Launch Options')
+        self.on_offline_toggled(self.offline_check)
 
         # ── Save directory ────────────────────────────────────────────────────
         save_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=16)
@@ -187,6 +202,11 @@ class GameSettingsDialog(Gtk.Dialog):
         self.settings_stack.add_titled(save_box, 'save', 'Save Directory')
 
         self.show_all()
+
+    def on_offline_toggled(self, btn):
+        active = not btn.get_active()
+        self._dll_box.set_sensitive(active)
+        self.launch_opts_entry.set_sensitive(active)
 
     def _add_dll_row(self, dll_name, mode, checked):
         row_box = Gtk.Box(spacing=6)
@@ -298,6 +318,7 @@ class GameSettingsDialog(Gtk.Dialog):
             'NAME':       self.name_entry.get_text().strip(),
             'LAUNCH_ENV': ' '.join(env_parts),
             'SAVEDIR':    self.save_entry.get_text().strip(),
+            'OFFLINE':    '1' if self.offline_check.get_active() else '',
         }
 
 

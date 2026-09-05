@@ -231,7 +231,12 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             "Open via the <b>Game Settings</b> button or right-click menu on a game.\n"
             "<b>Display</b> — rename the game and set custom cover art.\n"
             "<b>Compatibility</b> — per-game WINEDLLOVERRIDES: check a DLL to force "
-            "it native/builtin, or add your own.\n"
+            "it native/builtin, or add your own. Check <b>Offline game</b> to bypass "
+            "all of that — DLL overrides, launch options, and the selected Proton/"
+            "shared prefix — and just run <tt>umu-run &lt;exe&gt;</tt> with no custom "
+            "environment, letting umu manage its own default Proton build and prefix "
+            "(same as running the exe bare from a terminal). Useful for games that "
+            "don't need the online-fix tricks and run worse under the shared prefix.\n"
             "<b>Launch Options</b> — see below.\n"
             "<b>Save Directory</b> — point at the save path inside the Proton "
             "prefix so MonkeyLauncher can symlink it to a stable location."
@@ -735,16 +740,16 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             return
 
         exe, gamedir = self._selected_game()
-        proton = self._selected_proton()
-        if not exe or not proton:
-            log.warning("Launch attempted without a selected game/Proton version")
-            show_error(self, "Select a game and a Proton version first.")
+        if not exe:
+            log.warning("Launch attempted without a selected game")
+            show_error(self, "Select a game first.")
             return
 
         game_path  = str(Path(gamedir) / exe)
         game_cfg   = read_config(game_config_path(exe))
         savedir    = game_cfg.get('SAVEDIR', '')
         launch_env = game_cfg.get('LAUNCH_ENV', '')
+        offline    = game_cfg.get('OFFLINE') == '1'
 
         if savedir and os.path.isdir(os.path.dirname(savedir)):
             try:
@@ -752,37 +757,55 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             except Exception as e:
                 log.warning(f"Save symlink warning for {exe}: {e}")
 
-        env = os.environ.copy()
-        env.update({
-            'WINE':              str(proton / 'files' / 'bin' / 'wine64'),
-            'WINESERVER':        str(proton / 'files' / 'bin' / 'wineserver'),
-            'WINEPREFIX':        str(WINEPREFIX_PATH) + '/',
-            'WINEDLLOVERRIDES':  'OnlineFix64=n;SteamOverlay64=n;winmm=n,b;dnet=n;steam_api64=n',
-            'GAMEID':            '480',
-            'PROTONPATH':        str(proton),
-            'DXVK_STATE_CACHE':  '1',
-            'MANGOHUD':          '1' if self.mangohud else '0',
-        })
-        # Global overrides applied first, per-game overrides applied after so
-        # they win on conflicting env vars. KEY=VALUE tokens become env vars;
-        # everything else is a command-line token, Steam-%command%-style:
-        # tokens before "%command%" wrap/prefix the launch command (e.g.
-        # "gamemoderun %command%"), tokens after it (or all of them, if
-        # %command% is omitted) are appended as extra args to the game.
-        # Global wrapping goes outermost, per-game innermost.
-        global_launch_env = self.cfg.get('GLOBAL_LAUNCH_ENV', '')
-        g_prefix, g_suffix = parse_launch_tokens(global_launch_env, env)
-        p_prefix, p_suffix = parse_launch_tokens(launch_env, env)
+        if offline:
+            # Offline game: run exactly `umu-run <exe>` with no custom
+            # environment at all — no forced WINE/WINEPREFIX/GAMEID/
+            # PROTONPATH — so umu manages its own default Proton build,
+            # prefix, and runtime, same as running it bare from a terminal.
+            env = os.environ.copy()
+            cmd = ['umu-run', game_path]
+        else:
+            proton = self._selected_proton()
+            if not proton:
+                log.warning("Launch attempted without a selected Proton version")
+                show_error(self, "Select a Proton version first.")
+                return
 
-        cmd = g_prefix + p_prefix + ['umu-run', game_path] + p_suffix + g_suffix
+            env = os.environ.copy()
+            env.update({
+                'WINE':              str(proton / 'files' / 'bin' / 'wine64'),
+                'WINESERVER':        str(proton / 'files' / 'bin' / 'wineserver'),
+                'WINEPREFIX':        str(WINEPREFIX_PATH) + '/',
+                'WINEDLLOVERRIDES':  'OnlineFix64=n;SteamOverlay64=n;winmm=n,b;dnet=n;steam_api64=n',
+                'GAMEID':            '480',
+                'PROTONPATH':        str(proton),
+                'DXVK_STATE_CACHE':  '1',
+                'MANGOHUD':          '1' if self.mangohud else '0',
+            })
+            # Global overrides applied first, per-game overrides applied after so
+            # they win on conflicting env vars. KEY=VALUE tokens become env vars;
+            # everything else is a command-line token, Steam-%command%-style:
+            # tokens before "%command%" wrap/prefix the launch command (e.g.
+            # "gamemoderun %command%"), tokens after it (or all of them, if
+            # %command% is omitted) are appended as extra args to the game.
+            # Global wrapping goes outermost, per-game innermost.
+            global_launch_env = self.cfg.get('GLOBAL_LAUNCH_ENV', '')
+            g_prefix, g_suffix = parse_launch_tokens(global_launch_env, env)
+            p_prefix, p_suffix = parse_launch_tokens(launch_env, env)
+            cmd = g_prefix + p_prefix + ['umu-run', game_path] + p_suffix + g_suffix
 
-        log.info(f"Launching {exe} via {proton.name}")
-        log.debug(f"Launch command: {' '.join(cmd)}")
-        log.debug(f"Global launch overrides: {global_launch_env or '(none)'}, "
-                  f"per-game overrides: {launch_env or '(none)'}, "
+        # Run with cwd set to the game's own folder — some games load assets
+        # via relative paths and misbehave (or outright crash) if launched
+        # from an unrelated working directory, which Steam/Windows normally
+        # avoid by always starting a game "in" its own install folder.
+        game_cwd = os.path.dirname(game_path)
+
+        log.info(f"Launching {exe}" + (" (offline, umu default Proton)" if offline else f" via {proton.name}"))
+        log.debug(f"Launch command: {' '.join(cmd)} (cwd={game_cwd})")
+        log.debug(f"Offline: {offline}, per-game overrides: {launch_env or '(none)'}, "
                   f"savedir: {savedir or '(none)'}, mangohud: {self.mangohud}")
 
-        proc = subprocess.Popen(cmd, env=env)
+        proc = subprocess.Popen(cmd, env=env, cwd=game_cwd)
         self._running_proc = proc
 
         self.launch_btn.set_label("Stop")
@@ -1105,7 +1128,8 @@ class MonkeyLauncher(Gtk.ApplicationWindow):
             for exe_path in checked:
                 GLib.idle_add(self._set_installer_status, exe_path, 'running')
                 log.info(f"Running installer: {exe_path}")
-                result = subprocess.run(['umu-run', exe_path], env=env)
+                result = subprocess.run(['umu-run', exe_path], env=env,
+                                        cwd=os.path.dirname(exe_path))
                 ok = result.returncode == 0
                 if ok:
                     log.info(f"Installer finished: {exe_path}")

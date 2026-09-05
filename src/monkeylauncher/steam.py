@@ -78,7 +78,7 @@ def run_through_proton(exe_path, proton_path):
         'GAMEID':     '480',
     })
     log.info(f"Running installer via Proton: {exe_path} (proton={proton_path.name})")
-    subprocess.Popen(['umu-run', exe_path], env=env)
+    subprocess.Popen(['umu-run', exe_path], env=env, cwd=os.path.dirname(exe_path))
 
 def bootstrap_proton_prefix(proton_path):
     """Creates the shared compatdata/480 prefix by launching Spacewar once
@@ -102,13 +102,21 @@ def bootstrap_proton_prefix(proton_path):
     proc = subprocess.Popen(['umu-run', str(exe)], env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    # WINEPREFIX_PATH itself becomes "pfx" (often as a same-directory symlink,
+    # created almost immediately) — not a reliable signal that wine has
+    # actually finished initializing. system.reg/user.reg only get written
+    # once wineboot completes, so wait for those instead; otherwise this
+    # terminates Spacewar mid-setup and leaves a half-initialized prefix.
     pfx = WINEPREFIX_PATH / 'pfx'
+    system_reg = WINEPREFIX_PATH / 'system.reg'
+    user_reg   = WINEPREFIX_PATH / 'user.reg'
     waited = 0
-    while not pfx.is_dir() and proc.poll() is None and waited < 180:
+    while not (pfx.is_dir() and system_reg.exists() and user_reg.exists()) \
+            and proc.poll() is None and waited < 180:
         time.sleep(1)
         waited += 1
 
-    ready = pfx.is_dir()
+    ready = pfx.is_dir() and system_reg.exists() and user_reg.exists()
     if proc.poll() is None:
         log.debug("Terminating bootstrap process now that the prefix exists")
         proc.terminate()
