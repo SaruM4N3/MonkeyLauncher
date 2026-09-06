@@ -10,7 +10,30 @@ SAVES_BASE      = CONFIG_DIR / 'saves'
 LOG_DIR         = CONFIG_DIR / 'logs'
 LOG_FILE        = LOG_DIR / 'monkeylauncher.log'
 COVERS_DIR      = CONFIG_DIR / 'covers'
-STEAM_ROOT      = Path.home() / '.local' / 'share' / 'Steam'
+
+def _detect_steam_root():
+    """Locates the real Steam install dir. This varies by distro/packaging:
+    Arch puts it straight at ~/.local/share/Steam, while the official Debian/
+    Ubuntu package installs to ~/.steam/debian-installation instead. Steam
+    itself maintains ~/.steam/root and ~/.steam/steam as symlinks to wherever
+    it actually lives (the same symlink Proton resolves for
+    STEAM_COMPAT_CLIENT_INSTALL_PATH), so prefer those over guessing."""
+    home = Path.home()
+    candidates = [
+        home / '.steam' / 'root',
+        home / '.steam' / 'steam',
+        home / '.local' / 'share' / 'Steam',
+        home / '.steam' / 'debian-installation',
+        home / '.var' / 'app' / 'com.valvesoftware.Steam' / '.local' / 'share' / 'Steam',
+        home / '.var' / 'app' / 'com.valvesoftware.Steam' / 'data' / 'Steam',
+        home / 'snap' / 'steam' / 'common' / '.local' / 'share' / 'Steam',
+    ]
+    for c in candidates:
+        if (c / 'steamapps').is_dir():
+            return c
+    return home / '.local' / 'share' / 'Steam'
+
+STEAM_ROOT      = _detect_steam_root()
 WINEPREFIX_PATH = STEAM_ROOT / 'steamapps' / 'compatdata' / '480'
 
 EXCLUDE_DIRS  = {'_CommonRedist', 'Binaries'}
