@@ -28,13 +28,16 @@ def get_proton_dirs():
     return dirs
 
 def get_spacewar_dir():
-    manifest = STEAM_ROOT / 'steamapps' / 'appmanifest_480.acf'
-    if not manifest.exists():
-        return None
-    m = re.search(r'"installdir"\s+"([^"]+)"', manifest.read_text())
-    installdir = m.group(1) if m else 'Spacewar'
-    d = STEAM_ROOT / 'steamapps' / 'common' / installdir
-    return d if d.is_dir() else None
+    for lib in get_steam_libs() or [STEAM_ROOT]:
+        manifest = lib / 'steamapps' / 'appmanifest_480.acf'
+        if not manifest.exists():
+            continue
+        m = re.search(r'"installdir"\s+"([^"]+)"', manifest.read_text())
+        installdir = m.group(1) if m else 'Spacewar'
+        d = lib / 'steamapps' / 'common' / installdir
+        if d.is_dir():
+            return d
+    return None
 
 def find_spacewar_exe():
     d = get_spacewar_dir()
@@ -51,8 +54,8 @@ def check_steam_running():
         return False
 
 def check_app480_installed():
-    manifest = STEAM_ROOT / 'steamapps' / 'appmanifest_480.acf'
-    return manifest.exists()
+    libs = get_steam_libs() or [STEAM_ROOT]
+    return any((lib / 'steamapps' / 'appmanifest_480.acf').exists() for lib in libs)
 
 def setup_save_symlink(prefix_savedir, ml_savedir):
     src, dst = Path(prefix_savedir), Path(ml_savedir)
