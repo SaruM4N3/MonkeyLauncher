@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
+#include <thread>
 
 #include "http.hpp"
 #include "logging.hpp"
@@ -106,7 +107,8 @@ void perform_source_update(const std::string& tarball_url) {
 
     // The release ships sources, so build them here.
     log_info("Building update in {}", root.string());
-    if (run({"make", "-C", root.string()}) != 0)
+    const unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+    if (run({"make", "-j" + std::to_string(cores), "-C", root.string()}) != 0)
         throw std::runtime_error("Build failed — see the terminal output for the compiler errors");
 
     const fs::path lib = install_lib();

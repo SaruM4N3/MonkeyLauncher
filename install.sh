@@ -43,7 +43,7 @@ rm -rf "$BUILD_DIR/.pyinstaller_work" "$BUILD_DIR/.pyinstaller_spec" "$BUILD_DIR
 section "Building MonkeyLauncher…"
 
 info "Compiling (this can take a minute)…"
-make -C "$REPO_ROOT" || fail "Build failed — see the compiler output above"
+make -j"$(nproc)" -C "$REPO_ROOT" || fail "Build failed — see the compiler output above"
 ok "Compiled build/monkeylauncher"
 
 section "Installing app files…"
