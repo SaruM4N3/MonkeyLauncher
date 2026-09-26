@@ -4,23 +4,17 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Ubuntu 20.04 = glibc 2.31 — binaries built here run on any distro >= 2020
 RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-gi \
-    gir1.2-gtk-3.0 \
-    libgtk-3-0 \
-    libgtk-3-dev \
-    fonts-dejavu-core \
-    fonts-liberation \
-    fonts-noto-core \
-    fonts-noto-mono \
-    fontconfig \
-    && fc-cache -f \
+    g++ \
+    make \
+    pkg-config \
+    libgtkmm-3.0-dev \
+    libcurl4-openssl-dev \
+    nlohmann-json3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir pyinstaller
-
 WORKDIR /build
+COPY Makefile VERSION ./
+COPY cpp/ cpp/
 COPY src/ src/
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

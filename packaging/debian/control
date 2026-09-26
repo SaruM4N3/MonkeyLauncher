@@ -2,8 +2,8 @@ Package: monkeylauncher
 Version: VERSION_PLACEHOLDER
 Section: games
 Priority: optional
-Architecture: all
-Depends: python3, python3-gi, gir1.2-gtk-3.0, libgtk-3-0, fzf, winetricks, xdg-utils, procps, fonts-dejavu-core
+Architecture: amd64
+Depends: libgtkmm-3.0-1v5 | libgtkmm-3.0-1t64, libcurl4 | libcurl4t64, libstdc++6, fzf, winetricks, xdg-utils, procps, fonts-dejavu-core
 Recommends: mangohud, protontricks
 Suggests: umu-launcher
 Maintainer: SaruM4N3 <zakobajo@gmail.com>

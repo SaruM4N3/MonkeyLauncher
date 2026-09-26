@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-RESOURCES="$(cd "$(dirname "$0")/src" && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+RESOURCES="$REPO_ROOT/src"
 INSTALL_BIN="$HOME/.local/bin"
 INSTALL_DESKTOP="$HOME/.local/share/applications"
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)/dist"
@@ -227,7 +228,7 @@ else
     try_install git     git     git     git     git     || UMU_BUILD_OK=0
     try_install make    make    make    make    make    || UMU_BUILD_OK=0
     # The build itself needs python3 (venv + pip) — checked again, harmlessly,
-    # in the "Python & GTK3" section further down.
+    # below (python3 is also needed by umu-launcher itself).
     try_install python3 python3 python3 python3 python3 || UMU_BUILD_OK=0
 
     # The build's venv step needs pip/ensurepip, not just python3 itself.
@@ -273,44 +274,31 @@ if command -v umu-run &>/dev/null; then
   fi
 fi
 
-# ── Python & GTK3 ─────────────────────────────────────────────────────────────
-section "Checking Python / GTK3…"
+# ── Build toolchain & libraries (MonkeyLauncher is C++ / gtkmm-3.0) ────────────
+section "Checking build dependencies…"
 
-check_or_install python3 python3 python3 python3 python3
+#                        cmd            pacman           apt           dnf                  zypper
+check_or_install         g++            gcc              g++           gcc-c++              gcc-c++
+check_or_install         make           make             make          make                 make
+check_or_install         pkg-config     pkgconf          pkg-config    pkgconf-pkg-config   pkg-config
 
-if python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk" &>/dev/null; then
-  ok "python3-gi + GTK3 runtime"
-else
-  warn "python3-gi / GTK3 not found — installing…"
-  install_pkg "python-gobject gtk3" \
-              "python3-gi gir1.2-gtk-3.0 libgtk-3-0" \
-              "python3-gobject gtk3" \
-              "python3-gobject typelib-1_0-Gtk-3_0"
-  python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk" \
-    && ok "python3-gi + GTK3 runtime" \
-    || fail "Failed to install GTK3 bindings"
-fi
+# Development libraries, detected through pkg-config.
+# usage: check_or_install_lib <pkg-config module> <pacman> <apt> <dnf> <zypper>
+check_or_install_lib() {
+  local mod="$1" pacman="$2" apt="$3" dnf="$4" zypper="${5:-$4}"
+  if pkg-config --exists "$mod" 2>/dev/null; then
+    ok "$mod"
+  else
+    warn "$mod not found — installing…"
+    install_pkg "$pacman" "$apt" "$dnf" "$zypper"
+    pkg-config --exists "$mod" 2>/dev/null && ok "$mod" || fail "Failed to install $mod"
+  fi
+}
 
-# Verify GObject typelibs are present (needed at runtime by the PyInstaller binary)
-if ! python3 -c "
-import gi, sys
-for mod, ver in [('Gtk','3.0'),('Gdk','3.0'),('Pango','1.0'),('GLib','2.0')]:
-    try:
-        gi.require_version(mod, ver)
-        __import__('gi.repository.' + mod)
-    except Exception as e:
-        print(f'Missing typelib: {mod}-{ver} ({e})', file=sys.stderr)
-        sys.exit(1)
-" 2>/dev/null; then
-  warn "GObject typelibs incomplete — installing…"
-  install_pkg "gobject-introspection gtk3" \
-              "gir1.2-gtk-3.0 gir1.2-gdk-3.0 gir1.2-pango-1.0" \
-              "gobject-introspection gtk3" \
-              "typelib-1_0-Gtk-3_0 typelib-1_0-Pango-1_0"
-  ok "GObject typelibs installed"
-else
-  ok "GObject typelibs (Gtk, Gdk, Pango, GLib)"
-fi
+#                        module          pacman          apt                     dnf             zypper
+check_or_install_lib     gtkmm-3.0       gtkmm3          libgtkmm-3.0-dev        gtkmm30-devel   gtkmm3-devel
+check_or_install_lib     libcurl         curl            libcurl4-openssl-dev    libcurl-devel   libcurl-devel
+check_or_install_lib     nlohmann_json   nlohmann-json   nlohmann-json3-dev      json-devel      nlohmann_json-devel
 
 # ── Fonts ─────────────────────────────────────────────────────────────────────
 section "Checking fonts…"
@@ -331,32 +319,38 @@ fi
 rm -f "$BUILD_DIR/MonkeyLauncher"
 rm -rf "$BUILD_DIR/.pyinstaller_work" "$BUILD_DIR/.pyinstaller_spec" "$BUILD_DIR/.venv"
 
-# ── Install app files ──────────────────────────────────────────────────────────
+# ── Build & install app files ──────────────────────────────────────────────────
+section "Building MonkeyLauncher…"
+
+info "Compiling (this can take a minute)…"
+make -C "$REPO_ROOT" || fail "Build failed — see the compiler output above"
+ok "Compiled build/monkeylauncher"
+
 section "Installing app files…"
 
 INSTALL_LIB="$HOME/.local/lib/monkeylauncher"
 mkdir -p "$INSTALL_LIB" "$INSTALL_BIN"
 
-install -m 644 "$RESOURCES/MonkeyLauncherGUI.py" "$INSTALL_LIB/MonkeyLauncherGUI.py"
-ok "GUI script → $INSTALL_LIB/MonkeyLauncherGUI.py"
+# Leftovers from the old Python version: its package directory was named
+# "monkeylauncher", the same name the compiled binary uses now.
+rm -f  "$INSTALL_LIB/MonkeyLauncherGUI.py"
+[ -d "$INSTALL_LIB/monkeylauncher" ] && rm -rf "$INSTALL_LIB/monkeylauncher"
 
-rm -rf "$INSTALL_LIB/monkeylauncher"
-cp -r "$RESOURCES/monkeylauncher" "$INSTALL_LIB/monkeylauncher"
-ok "GUI package → $INSTALL_LIB/monkeylauncher/"
+install -m 755 "$REPO_ROOT/build/monkeylauncher" "$INSTALL_LIB/monkeylauncher"
+ok "GUI binary → $INSTALL_LIB/monkeylauncher"
 
-install -m 644 "$(dirname "$0")/VERSION" "$INSTALL_LIB/VERSION"
+install -m 644 "$REPO_ROOT/VERSION" "$INSTALL_LIB/VERSION"
 ok "VERSION → $INSTALL_LIB/VERSION"
 
 # ── Install binaries ───────────────────────────────────────────────────────────
 section "Installing binaries…"
 
-# GUI launcher wrapper — runs the Python script with the system interpreter
+# GUI launcher wrapper — keeps ~/.local/bin/MonkeyLauncher as the entry point
 cat > "$INSTALL_BIN/MonkeyLauncher" <<WRAPPER
 #!/bin/sh
-exec python3 "$INSTALL_LIB/MonkeyLauncherGUI.py" "\$@"
+exec "$INSTALL_LIB/monkeylauncher" "\$@"
 WRAPPER
 chmod 755 "$INSTALL_BIN/MonkeyLauncher"
-ok "MonkeyLauncher → $INSTALL_BIN/MonkeyLauncher"
 
 install -m 755 "$RESOURCES/MonkeyLauncherCLI.sh" "$INSTALL_BIN/MonkeyLauncherCLI"
 ok "MonkeyLauncher    → $INSTALL_BIN/MonkeyLauncher"

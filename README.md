@@ -1,7 +1,7 @@
 # MonkeyLauncher
 
 ![Platform](https://img.shields.io/badge/Platform-Linux-orange)
-![Python](https://img.shields.io/badge/Python-3.x-blue)
+![C++](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![License](https://img.shields.io/badge/License-Educational-green)
 
 A launcher for online-fix Windows games on Linux, built on top of [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) and Proton.
@@ -61,8 +61,21 @@ Save directory management — saves are symlinked out of the Proton prefix into 
 
 | Dependency | Purpose |
 |---|---|
-| python3-gobject + GTK3 | GUI only |
+| gtkmm 3 (`gtkmm3` / `libgtkmm-3.0`) + libcurl | GUI only (runtime) |
 | mangohud | Optional overlay |
+
+<summary><b>Build Dependencies (source install only)</b></summary>
+
+The GUI is written in C++17 with [gtkmm-3.0](https://gtkmm.org/). Installing from source compiles it, which needs:
+
+| Dependency | Arch | Debian / Ubuntu | Fedora | openSUSE |
+|---|---|---|---|---|
+| C++ compiler, make, pkg-config | `gcc make pkgconf` | `g++ make pkg-config` | `gcc-c++ make pkgconf-pkg-config` | `gcc-c++ make pkg-config` |
+| gtkmm 3 | `gtkmm3` | `libgtkmm-3.0-dev` | `gtkmm30-devel` | `gtkmm3-devel` |
+| libcurl | `curl` | `libcurl4-openssl-dev` | `libcurl-devel` | `libcurl-devel` |
+| nlohmann-json | `nlohmann-json` | `nlohmann-json3-dev` | `json-devel` | `nlohmann_json-devel` |
+
+`install.sh` installs these for you. Distro packages (`.deb` / Arch) ship the compiled binary and only need the runtime libraries.
 
 <summary><b>Installation Notes</b></summary>
 
@@ -105,7 +118,7 @@ Both packages install to `/usr` and add a `MonkeyLauncher` app entry + `MonkeyLa
 ./install.sh
 ```
 
-Installs into `~/.local/bin/` and creates a `.desktop` entry. Adds a shell alias for the CLI to `.bashrc` / `.zshrc` / `config.fish`. Detects your distro and installs runtime dependencies automatically (including building `umu-launcher` from source where there's no native package).
+Compiles the GUI (`make`), installs into `~/.local/bin/` and `~/.local/lib/monkeylauncher/`, and creates a `.desktop` entry. Adds a shell alias for the CLI to `.bashrc` / `.zshrc` / `config.fish`. Detects your distro and installs runtime dependencies automatically (including building `umu-launcher` from source where there's no native package).
 
 </details>
 
@@ -198,13 +211,26 @@ Both the GUI and CLI log to colored console output plus a persistent, rotating f
 <details>
 <summary><b>Build a Release (Docker)</b></summary>
 
-Produces binaries compatible with any Linux distro running glibc ≥ 2.31 (Ubuntu 20.04+, Arch, Fedora 36+, Debian 12+…).
+Compiles the GUI inside Ubuntu 20.04, so the binary runs on any Linux distro running glibc ≥ 2.31 (Ubuntu 20.04+, Arch, Fedora 36+, Debian 12+…).
 
 ```bash
 ./build-release.sh
 ```
 
-Output lands in `dist/`. The GUI binary still requires `python3-gobject` + GTK3 on the target machine at runtime (GObject introspection cannot be bundled).
+Output lands in `dist/`. The GUI binary still requires gtkmm 3 and libcurl on the target machine at runtime (they are linked dynamically).
+
+</details>
+
+<details>
+<summary><b>Build from source (development)</b></summary>
+
+```bash
+make            # → build/monkeylauncher
+./build/monkeylauncher --debug
+make install DESTDIR=/tmp/stage PREFIX=/usr   # stage a system-wide install
+```
+
+Needs the [build dependencies](#requirements) above. `--debug` (or `-v`, or `MONKEYLAUNCHER_DEBUG=1`) enables verbose logging.
 
 </details>
 
@@ -215,7 +241,7 @@ Output lands in `dist/`. The GUI binary still requires `python3-gobject` + GTK3 
 ./packaging/build-all.sh
 ```
 
-Builds a `.deb` (via Docker, using `debian:bookworm-slim`) and an Arch package (via `makepkg` — needs an Arch-based host). Both install to `/usr` and declare real package-manager dependencies instead of bundling anything. Output lands in `dist/`. See `packaging/arch/PKGBUILD` and `packaging/debian/control` for the exact dependency lists.
+Compiles the GUI and builds a `.deb` (via Docker, using `debian:bookworm-slim`) and an Arch package (via `makepkg` — needs an Arch-based host). Both are `x86_64`/`amd64` packages that install to `/usr` and declare real package-manager dependencies instead of bundling anything. Output lands in `dist/`. See `packaging/arch/PKGBUILD` and `packaging/debian/control` for the exact dependency lists.
 
 </details>
 
@@ -227,12 +253,21 @@ Builds a `.deb` (via Docker, using `debian:bookworm-slim`) and an Arch package (
 <summary><b>Directory Layout</b></summary>
 
 ```
+cpp/                    GUI (C++17 / gtkmm-3.0)
+├── app.cpp             entry point + startup checks (Steam running, App 480, Proton prefix)
+├── main_window.*       main window: library (list/grid), Help, Settings
+├── dialogs.*           Game Settings + Install Dependencies dialogs
+├── config.*            paths, config/gamedirs files, game scanning
+├── steam.*             Steam libraries, Proton discovery, prefix bootstrap
+├── covers.*            Steam-store cover lookup
+├── updater.*           GitHub release check + in-place source update
+├── proc.*, http.*      subprocess and libcurl helpers
+├── logging.*, version.*, ui.*, common.*
 src/
-├── MonkeyLauncherGUI.py    entry-point shim (from monkeylauncher.app import App)
-├── monkeylauncher/         GUI package: config, logging_setup, steam, covers, dialogs, main_window, app
 ├── MonkeyLauncherCLI.sh    CLI (fzf-based)
 ├── monkeylauncher.desktop
 └── logo.png
+Makefile              builds build/monkeylauncher
 docker/               Dockerfile and build entrypoint
 dist/                 build output (gitignored)
 install.sh
