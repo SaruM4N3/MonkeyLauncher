@@ -3,8 +3,38 @@
 CONFIG_FILE="$HOME/.config/MonkeyLauncher/config"
 GAMES_DIR="$HOME/.config/MonkeyLauncher/games"
 SAVES_BASE="$HOME/.config/MonkeyLauncher/saves"
-STEAM_ROOT="$HOME/.local/share/Steam"
-WINEPREFIX_PATH="$STEAM_ROOT/steamapps/compatdata/480"
+
+# --- Config helpers (the file is shared with the GUI: never drop its other keys) ---
+config_get() { grep "^$1=" "$CONFIG_FILE" 2>/dev/null | head -n1 | cut -d= -f2-; }
+config_set() {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  local tmp; tmp=$(mktemp)
+  { [ -f "$CONFIG_FILE" ] && grep -v "^$1=" "$CONFIG_FILE"; printf '%s=%s\n' "$1" "$2"; } > "$tmp"
+  mv "$tmp" "$CONFIG_FILE"
+}
+
+# --- Steam install dir: the STEAM_ROOT saved in the config (picked by the user,
+# in the GUI's Settings > Steam or here) wins; otherwise the usual locations. ---
+detect_steam_root() {
+  local saved c
+  saved=$(config_get STEAM_ROOT)
+  if [ -n "$saved" ] && [ -d "$saved/steamapps" ]; then echo "$saved"; return; fi
+  for c in "$HOME/.steam/root" \
+           "$HOME/.steam/steam" \
+           "$HOME/.local/share/Steam" \
+           "$HOME/.steam/debian-installation" \
+           "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam" \
+           "$HOME/.var/app/com.valvesoftware.Steam/data/Steam" \
+           "$HOME/snap/steam/common/.local/share/Steam"; do
+    if [ -d "$c/steamapps" ]; then echo "$c"; return; fi
+  done
+  echo "$HOME/.local/share/Steam"
+}
+set_steam_root() {
+  STEAM_ROOT="$1"
+  WINEPREFIX_PATH="$STEAM_ROOT/steamapps/compatdata/480"
+}
+set_steam_root "$(detect_steam_root)"
 MANGOHUD=0
 SETUP=0
 SETUP_PROTON=0
@@ -76,14 +106,48 @@ pick_directory() {
   done
 }
 
+# --- Shared: Steam library folders (Steam's own list + the STEAM_LIBRARY the user picked) ---
+collect_steam_libs() {
+  local VDF="$STEAM_ROOT/steamapps/libraryfolders.vdf" extra
+  STEAM_LIBS=()
+  [ -f "$VDF" ] && mapfile -t STEAM_LIBS < <(grep '"path"' "$VDF" | awk -F'"' '{print $4}')
+  extra=$(config_get STEAM_LIBRARY)
+  if [ -n "$extra" ]; then
+    local l found=0
+    for l in "${STEAM_LIBS[@]}"; do [ "$l" = "$extra" ] && found=1; done
+    [ "$found" -eq 0 ] && STEAM_LIBS+=("$extra")
+  fi
+  [ ${#STEAM_LIBS[@]} -eq 0 ] && STEAM_LIBS=("$STEAM_ROOT")
+  return 0
+}
+
+# Prints the path of appmanifest_480.acf in whichever library has it.
+find_app480_manifest() {
+  collect_steam_libs
+  local lib
+  for lib in "${STEAM_LIBS[@]}"; do
+    if [ -f "$lib/steamapps/appmanifest_480.acf" ]; then
+      echo "$lib/steamapps/appmanifest_480.acf"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# A folder containing steamapps/, or the steamapps/ folder itself -> the parent.
+normalize_steam_dir() {
+  local d="${1%/}"
+  if [ -d "$d/steamapps" ]; then echo "$d"; return 0; fi
+  if [ "$(basename "$d")" = "steamapps" ] && [ -d "$d" ]; then dirname "$d"; return 0; fi
+  return 1
+}
+
 # --- Shared: collect Proton installations ---
 collect_proton_dirs() {
-  local VDF="$STEAM_ROOT/steamapps/libraryfolders.vdf"
-  if [ ! -f "$VDF" ]; then
-    log_error "Steam library config not found: $VDF"
-    return 1
+  collect_steam_libs
+  if [ ! -f "$STEAM_ROOT/steamapps/libraryfolders.vdf" ] && [ -z "$(config_get STEAM_LIBRARY)" ]; then
+    log_warn "Steam library config not found: $STEAM_ROOT/steamapps/libraryfolders.vdf"
   fi
-  mapfile -t STEAM_LIBS < <(grep '"path"' "$VDF" | awk -F'"' '{print $4}')
   PROTON_DIRS=()
   for lib in "${STEAM_LIBS[@]}"; do
     while IFS= read -r -d '' dir; do
@@ -145,17 +209,15 @@ ensure_proton_prefix() {
       return 1
     fi
     proton_path=$(printf '%s\n' "${PROTON_DIRS[@]}" | grep -F "/$proton_label")
-    mkdir -p "$(dirname "$CONFIG_FILE")"
-    local saved_gamedir
-    saved_gamedir=$(grep '^GAMEDIR=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
-    { [ -n "$saved_gamedir" ] && echo "GAMEDIR=$saved_gamedir"; echo "PROTONPATH=$proton_path"; } > "$CONFIG_FILE"
+    config_set PROTONPATH "$proton_path"
     log_info "Favorite Proton saved: $proton_label"
   fi
 
-  local manifest="$STEAM_ROOT/steamapps/appmanifest_480.acf"
+  local manifest
+  manifest=$(find_app480_manifest) || { log_error "Spacewar (App 480) manifest not found."; return 1; }
   local installdir
   installdir=$(sed -nE 's/.*"installdir"[[:space:]]+"([^"]+)".*/\1/p' "$manifest" | head -n1)
-  local spacewar_dir="$STEAM_ROOT/steamapps/common/${installdir:-Spacewar}"
+  local spacewar_dir="$(dirname "$manifest")/common/${installdir:-Spacewar}"
   local spacewar_exe
   spacewar_exe=$(find "$spacewar_dir" -name '*.exe' -type f 2>/dev/null | sort | head -n1)
   if [ -z "$spacewar_exe" ]; then
@@ -192,6 +254,21 @@ ensure_proton_prefix() {
 }
 
 # ── Startup checks ─────────────────────────────────────────────────────────────
+# Steam's folder wasn't auto-detected: ask for it (saved as STEAM_ROOT in the config).
+while [ ! -d "$STEAM_ROOT/steamapps" ]; do
+  log_warn "Steam installation not found (last tried $STEAM_ROOT)."
+  read -e -r -p "Path of your Steam folder (contains 'steamapps'), empty to quit: " ans
+  [ -z "$ans" ] && exit 1
+  ans="${ans/#\~/$HOME}"
+  if dir=$(normalize_steam_dir "$ans"); then
+    config_set STEAM_ROOT "$dir"
+    set_steam_root "$dir"
+    log_info "Steam folder saved: $dir"
+  else
+    log_error "'$ans' doesn't contain a 'steamapps' directory."
+  fi
+done
+
 if ! pgrep -x steam &>/dev/null; then
   read -r -p "Steam is not running. Launch it now and wait? [Y/n] " ans
   if [[ "$ans" == [nN] ]]; then
@@ -203,16 +280,29 @@ if ! pgrep -x steam &>/dev/null; then
   log_info "Steam is running."
 fi
 
-if [ ! -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; then
-  read -r -p "Spacewar (App 480) is not installed. Open Steam to install it and wait? [Y/n] " ans
-  if [[ "$ans" == [nN] ]]; then
-    exit 1
-  fi
-  steam "steam://install/480" &>/dev/null &
-  log_info "Waiting for Spacewar to finish installing…"
-  until [ -f "$STEAM_ROOT/steamapps/appmanifest_480.acf" ]; do sleep 3; done
-  log_info "Spacewar installed."
-fi
+while ! find_app480_manifest >/dev/null; do
+  log_warn "Spacewar (App 480) was not found."
+  read -r -p "[i] install it via Steam, [c] choose the Steam library folder that has it, [q] quit: " ans
+  case "$ans" in
+    [iI])
+      steam "steam://install/480" &>/dev/null &
+      log_info "Waiting for Spacewar to finish installing…"
+      until find_app480_manifest >/dev/null; do sleep 3; done
+      log_info "Spacewar installed."
+      ;;
+    [cC])
+      read -e -r -p "Steam library folder (contains 'steamapps'): " lib
+      lib="${lib/#\~/$HOME}"
+      if dir=$(normalize_steam_dir "$lib") && [ -f "$dir/steamapps/appmanifest_480.acf" ]; then
+        config_set STEAM_LIBRARY "$dir"
+        log_info "Steam library saved: $dir"
+      else
+        log_error "Spacewar (App 480) wasn't found in '$lib'."
+      fi
+      ;;
+    *) exit 1 ;;
+  esac
+done
 
 ensure_proton_prefix || exit 1
 
@@ -258,9 +348,7 @@ done
 if [ "$SETUP" -eq 1 ]; then
   GAMEDIR=$(pick_directory /)
   [ -z "$GAMEDIR" ] && exit 0
-  mkdir -p "$(dirname "$CONFIG_FILE")"
-  SAVED_PROTON=$(grep '^PROTONPATH=' "$CONFIG_FILE" 2>/dev/null | cut -d= -f2-)
-  { echo "GAMEDIR=$GAMEDIR"; [ -n "$SAVED_PROTON" ] && echo "PROTONPATH=$SAVED_PROTON"; } > "$CONFIG_FILE"
+  config_set GAMEDIR "$GAMEDIR"
   log_info "Game directory saved: $GAMEDIR"
   exit 0
 fi
@@ -341,8 +429,7 @@ if [ "$SETUP_PROTON" -eq 1 ]; then
   PROTON_LABEL=$(printf '%s\n' "${PROTON_DIRS[@]##*/}" | fzf --prompt="Proton > " --height=40% --border)
   [ -z "$PROTON_LABEL" ] && exit 0
   PROTONPATH=$(printf '%s\n' "${PROTON_DIRS[@]}" | grep -F "/$PROTON_LABEL")
-  SAVED_GAMEDIR=$(grep '^GAMEDIR=' "$CONFIG_FILE" | cut -d= -f2-)
-  { [ -n "$SAVED_GAMEDIR" ] && echo "GAMEDIR=$SAVED_GAMEDIR"; echo "PROTONPATH=$PROTONPATH"; } > "$CONFIG_FILE"
+  config_set PROTONPATH "$PROTONPATH"
   log_info "Favorite Proton saved: $PROTON_LABEL"
   exit 0
 fi

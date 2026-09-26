@@ -14,15 +14,26 @@ BIN := build/monkeylauncher
 PREFIX  ?= /usr
 LIBDIR  ?= $(PREFIX)/lib/monkeylauncher
 
+# Short "CXX file" lines by default; `make V=1` prints the full compiler commands.
+ifeq ($(V),1)
+  Q   :=
+  say := @:
+else
+  Q   := @
+  say := @echo
+endif
+
 all: $(BIN)
 
 $(BIN): $(OBJ)
 	@mkdir -p $(dir $@)
-	$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+	$(say) "  LD   $@"
+	$(Q)$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 build/obj/%.o: cpp/%.cpp $(wildcard cpp/*.hpp)
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+	$(say) "  CXX  $<"
+	$(Q)$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 install: all
 	install -Dm755 $(BIN) $(DESTDIR)$(LIBDIR)/monkeylauncher

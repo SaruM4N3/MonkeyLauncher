@@ -43,7 +43,18 @@ rm -rf "$BUILD_DIR/.pyinstaller_work" "$BUILD_DIR/.pyinstaller_spec" "$BUILD_DIR
 section "Building MonkeyLauncher…"
 
 info "Compiling (this can take a minute)…"
-make -j"$(nproc)" -C "$REPO_ROOT" || fail "Build failed — see the compiler output above"
+# Compiler output is only shown if the build fails (or with VERBOSE=1).
+BUILD_LOG="$(mktemp)"
+if [ "${VERBOSE:-0}" = "1" ]; then
+  make -j"$(nproc)" -C "$REPO_ROOT" V=1 || fail "Build failed — see the compiler output above"
+elif make -s -j"$(nproc)" -C "$REPO_ROOT" >"$BUILD_LOG" 2>&1; then
+  :
+else
+  cat "$BUILD_LOG" >&2
+  rm -f "$BUILD_LOG"
+  fail "Build failed — see the compiler output above"
+fi
+rm -f "$BUILD_LOG"
 ok "Compiled build/monkeylauncher"
 
 section "Installing app files…"

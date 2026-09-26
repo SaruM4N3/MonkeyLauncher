@@ -126,7 +126,7 @@ To install only the dependencies (runtime tools, build toolchain, fonts) without
 ./installdependencies.sh
 ```
 
-If everything is already installed, `./install.sh --skip-deps` skips that step.
+If everything is already installed, `./install.sh --skip-deps` skips that step. The compiler output is hidden unless the build fails; `VERBOSE=1 ./install.sh` shows it.
 
 </details>
 
@@ -239,7 +239,7 @@ make            # → build/monkeylauncher
 make install DESTDIR=/tmp/stage PREFIX=/usr   # stage a system-wide install
 ```
 
-Needs the [build dependencies](#requirements) above. `--debug` (or `-v`, or `MONKEYLAUNCHER_DEBUG=1`) enables verbose logging.
+Needs the [build dependencies](#requirements) above. `make V=1` prints the full compiler commands. `--debug` (or `-v`, or `MONKEYLAUNCHER_DEBUG=1`) enables verbose logging.
 
 </details>
 
