@@ -134,6 +134,10 @@ void MonkeyLauncher::build_ui() {
     update_now_label_ = Gtk::manage(new Gtk::Label("Update now"));
     pack(*update_box, *update_now_label_);
     update_now_btn_->add(*update_box);
+    // The button itself is no_show_all (hidden until an update is found), and
+    // that also makes the window's show_all() skip its contents — so show the
+    // icon + label now, otherwise show() later reveals an empty green button.
+    update_box->show_all();
     hb->set_custom_title(*update_now_btn_);
 
     add(*stack_);
@@ -1626,7 +1630,20 @@ void MonkeyLauncher::prompt_update(const ReleaseInfo& info) {
                          Gtk::MESSAGE_INFO, Gtk::BUTTONS_NONE);
     Glib::ustring body = strip(info.body);
     if (body.size() > 2000) body = body.substr(0, 2000);
-    d.set_secondary_text(body.empty() ? Glib::ustring("(no changelog provided)") : body);
+    // Release notes can be long: keep them in a scrollable area so the dialog
+    // (title + buttons) never grows taller than the screen.
+    Gtk::ScrolledWindow scroll;
+    scroll.set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    scroll.set_max_content_height(300);
+    scroll.set_propagate_natural_height(true);
+    Gtk::Label notes(body.empty() ? Glib::ustring("(no changelog provided)") : body);
+    notes.set_xalign(0);
+    notes.set_yalign(0);
+    notes.set_line_wrap(true);
+    notes.set_max_width_chars(70);
+    scroll.add(notes);
+    d.get_message_area()->pack_start(scroll, true, true, 0);
+    scroll.show_all();
     d.add_button("Later", Gtk::RESPONSE_CANCEL);
     d.add_button(can_auto_update ? "Update Now" : "Open Releases Page", Gtk::RESPONSE_OK);
     const int response = d.run();
