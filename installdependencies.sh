@@ -262,15 +262,18 @@ fi
 
 # umu-run + Python 3.14 compatibility: Python 3.14 introduced a built-in
 # compression.zstd module that conflicts with pyzstd when libzstd is too old
-# (missing ZSTD_defaultCLevel, added in libzstd 1.5.5). Ensure zstd is current.
+# (missing ZSTD_defaultCLevel, added in libzstd 1.5.5). Only act when umu-run
+# is actually broken — otherwise there's nothing to fix.
+umu_works() { python3 -c "import umu" 2>/dev/null || umu-run --help &>/dev/null; }
+
 if command -v umu-run &>/dev/null; then
-  if python3 -c "import sys; exit(0 if sys.version_info >= (3,14) else 1)" 2>/dev/null; then
-    warn "Python 3.14 detected — ensuring libzstd is up to date for umu-run compatibility…"
+  if python3 -c "import sys; exit(0 if sys.version_info >= (3,14) else 1)" 2>/dev/null \
+       && ! umu_works; then
+    warn "umu-run fails on Python 3.14 — ensuring libzstd is up to date…"
     install_pkg zstd zstd zstd zstd
     # Also upgrade pyzstd in case the installed version predates Python 3.14 support
     python3 -m pip install --user --quiet --upgrade pyzstd 2>/dev/null && ok "pyzstd updated" || true
-    # Verify umu-run actually imports cleanly now
-    if python3 -c "import umu" 2>/dev/null || umu-run --help &>/dev/null; then
+    if umu_works; then
       ok "umu-run Python 3.14 compatibility"
     else
       warn "umu-run may still have import issues — try: sudo pacman -Syu zstd"
