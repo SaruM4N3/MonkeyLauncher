@@ -75,7 +75,7 @@ The GUI is written in C++17 with [gtkmm-3.0](https://gtkmm.org/). Installing fro
 | libcurl | `curl` | `libcurl4-openssl-dev` | `libcurl-devel` | `libcurl-devel` |
 | nlohmann-json | `nlohmann-json` | `nlohmann-json3-dev` | `json-devel` | `nlohmann_json-devel` |
 
-`install.sh` installs these for you. Distro packages (`.deb` / Arch) ship the compiled binary and only need the runtime libraries.
+`installdependencies.sh` (called by `install.sh`) installs these for you. Distro packages (`.deb` / Arch) ship the compiled binary and only need the runtime libraries.
 
 <summary><b>Installation Notes</b></summary>
 
@@ -118,7 +118,15 @@ Both packages install to `/usr` and add a `MonkeyLauncher` app entry + `MonkeyLa
 ./install.sh
 ```
 
-Compiles the GUI (`make`), installs into `~/.local/bin/` and `~/.local/lib/monkeylauncher/`, and creates a `.desktop` entry. Adds a shell alias for the CLI to `.bashrc` / `.zshrc` / `config.fish`. Detects your distro and installs runtime dependencies automatically (including building `umu-launcher` from source where there's no native package).
+Installs the dependencies (via `installdependencies.sh`), compiles the GUI (`make`), installs into `~/.local/bin/` and `~/.local/lib/monkeylauncher/`, and creates a `.desktop` entry. Adds a shell alias for the CLI to `.bashrc` / `.zshrc` / `config.fish`. Detects your distro and installs runtime dependencies automatically (including building `umu-launcher` from source where there's no native package).
+
+To install only the dependencies (runtime tools, build toolchain, fonts) without building or installing the app:
+
+```bash
+./installdependencies.sh
+```
+
+If everything is already installed, `./install.sh --skip-deps` skips that step.
 
 </details>
 
@@ -270,7 +278,8 @@ src/
 Makefile              builds build/monkeylauncher
 docker/               Dockerfile and build entrypoint
 dist/                 build output (gitignored)
-install.sh
+installdependencies.sh   distro detection + runtime/build dependencies
+install.sh              installs dependencies, builds and installs into ~/.local
 uninstall.sh
 build-release.sh
 ```
