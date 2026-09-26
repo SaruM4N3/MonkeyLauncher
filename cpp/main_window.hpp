@@ -113,6 +113,10 @@ private:
     void on_rescan_game_dir(const std::string& gamedir);
     void apply_rescan(const std::string& gamedir, const std::vector<std::pair<std::string, Config>>& exes);
     void on_proton_changed();
+    void refresh_steam_labels();
+    void refresh_after_steam_change();
+    void on_change_steam_root();
+    void on_change_steam_library();
     bool on_global_launch_opts_changed();
     void check_installed_deps();
     void apply_installed_deps(const std::set<std::string>& installed);
@@ -171,6 +175,8 @@ private:
     Gtk::Spinner*      spinner_;
     Gtk::Button       *game_settings_btn_, *launch_btn_;
 
+    Gtk::Label*        steam_root_lbl_;
+    Gtk::Label*        steam_lib_lbl_;
     Gtk::ComboBoxText* proton_combo_;
     Gtk::Entry*        global_launch_opts_entry_;
     Gtk::Label*        installer_source_lbl_;

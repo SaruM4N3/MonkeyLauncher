@@ -35,4 +35,16 @@ void show_error(Gtk::Window* parent, const std::string& msg) {
     run_message(parent, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, msg);
 }
 
+std::optional<fs::path> choose_folder(Gtk::Window* parent, const Glib::ustring& title,
+                                      const fs::path& start) {
+    std::unique_ptr<Gtk::FileChooserDialog> d;
+    if (parent) d = std::make_unique<Gtk::FileChooserDialog>(*parent, title, Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER);
+    else        d = std::make_unique<Gtk::FileChooserDialog>(title, Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER);
+    d->add_button("_Cancel", Gtk::RESPONSE_CANCEL);
+    d->add_button("Select", Gtk::RESPONSE_OK);
+    d->set_current_folder(start.string());
+    if (d->run() != Gtk::RESPONSE_OK) return std::nullopt;
+    return fs::path(d->get_filename());
+}
+
 }  // namespace ml

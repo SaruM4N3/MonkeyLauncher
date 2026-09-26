@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -31,8 +32,25 @@ const fs::path& saves_base();
 const fs::path& log_dir();
 const fs::path& log_file();
 const fs::path& covers_dir();
+// Steam install dir: the STEAM_ROOT saved in the config (a folder the user
+// picked) if it is valid, else auto-detected. Both references stay valid
+// across reload_steam_paths().
 const fs::path& steam_root();
 const fs::path& wineprefix_path();
+// True if steam_root() really contains a steamapps/ directory (i.e. Steam
+// was found, as opposed to falling back to the default location).
+bool steam_root_found();
+// Re-runs the detection (after the config's STEAM_ROOT changed).
+void reload_steam_paths();
+// Accepts a folder containing steamapps/, or the steamapps/ folder itself
+// (returning its parent). nullopt if it is neither.
+std::optional<fs::path> normalize_steam_dir(const fs::path& chosen);
+// Remembers a user-chosen Steam dir in the config and re-detects.
+void save_steam_root(const fs::path& dir);
+// Forgets the user-chosen Steam dir (back to auto-detection).
+void clear_steam_root();
+// True if steam_root() comes from a folder the user picked.
+bool steam_root_is_custom();
 
 // ── Game-dirs helpers ────────────────────────────────────────────────────────
 std::vector<std::string> read_gamedirs();

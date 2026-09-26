@@ -394,6 +394,9 @@ void MonkeyLauncher::build_help_page() {
     add_help_section("Settings tab", {
         "<b>Proton</b> — pick which installed Proton/UMU build is used to "
         "launch games.",
+        "<b>Steam</b> — if Steam or Spacewar (App 480) isn't detected "
+        "automatically, choose the Steam folder or the Steam library that "
+        "contains it (also offered at startup when nothing is found).",
         "<b>Global launch options</b> (same syntax as a game's Launch Options) "
         "apply to every game; per-game options are layered on top and win on "
         "conflicting env vars.",
@@ -470,6 +473,61 @@ void MonkeyLauncher::build_settings_page() {
     pack(*proton_box, *note);
 
     settings_stack_->add(*proton_box, "proton", "Proton");
+
+    // ── Steam (where MonkeyLauncher looks for Steam and Spacewar) ───────────
+    auto* steam_box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 8));
+    set_margin_all(*steam_box, 16);
+    steam_box->set_valign(Gtk::ALIGN_START);
+
+    pack(*steam_box, *make_label("Steam folder", 0));
+    auto* root_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    steam_root_lbl_ = make_label("", 0);
+    steam_root_lbl_->set_hexpand(true);
+    steam_root_lbl_->set_line_wrap(true);
+    steam_root_lbl_->set_selectable(true);
+    auto* root_change = Gtk::manage(new Gtk::Button("Change…"));
+    root_change->signal_clicked().connect([this] { on_change_steam_root(); });
+    auto* root_reset = Gtk::manage(new Gtk::Button("Auto-detect"));
+    root_reset->set_tooltip_text("Forget the chosen folder and detect Steam automatically");
+    root_reset->signal_clicked().connect([this] {
+        clear_steam_root();
+        refresh_after_steam_change();
+    });
+    pack(*root_row, *steam_root_lbl_, true, true);
+    pack(*root_row, *root_change);
+    pack(*root_row, *root_reset);
+    pack(*steam_box, *root_row);
+
+    pack(*steam_box, *Gtk::manage(new Gtk::Separator), false, false, 8);
+
+    pack(*steam_box, *make_label("Steam library with Spacewar (App 480)", 0));
+    auto* lib_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    steam_lib_lbl_ = make_label("", 0);
+    steam_lib_lbl_->set_hexpand(true);
+    steam_lib_lbl_->set_line_wrap(true);
+    steam_lib_lbl_->set_selectable(true);
+    auto* lib_change = Gtk::manage(new Gtk::Button("Change…"));
+    lib_change->signal_clicked().connect([this] { on_change_steam_library(); });
+    auto* lib_reset = Gtk::manage(new Gtk::Button("Auto-detect"));
+    lib_reset->set_tooltip_text("Forget the chosen library and use the ones Steam reports");
+    lib_reset->signal_clicked().connect([this] {
+        clear_steam_library();
+        refresh_after_steam_change();
+    });
+    pack(*lib_row, *steam_lib_lbl_, true, true);
+    pack(*lib_row, *lib_change);
+    pack(*lib_row, *lib_reset);
+    pack(*steam_box, *lib_row);
+
+    auto* steam_note = make_label("", 0);
+    steam_note->set_line_wrap(true);
+    steam_note->set_markup("<small>Only needed when Steam or Spacewar isn't detected "
+                           "automatically (custom install location, another drive…). "
+                           "Pick the folder that contains <i>steamapps</i>.</small>");
+    pack(*steam_box, *steam_note);
+    refresh_steam_labels();
+
+    settings_stack_->add(*steam_box, "steam", "Steam");
 
     // ── Dependencies (installers + winetricks — both install things into the
     // prefix before playing) ──────────────────────────────────────────────────
@@ -1279,6 +1337,56 @@ void MonkeyLauncher::apply_rescan(const std::string& gamedir,
 
     spinner_->stop();
     start_cover_fetch();
+}
+
+void MonkeyLauncher::refresh_steam_labels() {
+    if (!steam_root_found())
+        steam_root_lbl_->set_text("Not found — " + steam_root().string());
+    else
+        steam_root_lbl_->set_text(steam_root().string() +
+                                  (steam_root_is_custom() ? "  (chosen)" : "  (auto-detected)"));
+    const std::string lib = saved_steam_library();
+    steam_lib_lbl_->set_text(lib.empty() ? "Auto (libraries reported by Steam)" : lib + "  (chosen)");
+}
+
+// After the Steam/library location changed: pick up the new config, re-scan
+// Proton versions and refresh what depends on them.
+void MonkeyLauncher::refresh_after_steam_change() {
+    cfg_ = read_config(config_file());   // keep our copy in sync: it gets written back later
+    proton_dirs_ = get_proton_dirs();
+    populate_proton_combo();
+    refresh_steam_labels();
+    check_installed_deps();
+}
+
+void MonkeyLauncher::on_change_steam_root() {
+    auto chosen = choose_folder(this, "Select your Steam folder", steam_root());
+    if (!chosen) return;
+    auto dir = normalize_steam_dir(*chosen);
+    if (!dir) {
+        show_error(this, "That folder doesn't contain a \"steamapps\" directory, so it "
+                         "doesn't look like a Steam install.");
+        return;
+    }
+    log_info("Steam folder changed to {}", dir->string());
+    save_steam_root(*dir);
+    refresh_after_steam_change();
+}
+
+void MonkeyLauncher::on_change_steam_library() {
+    auto chosen = choose_folder(this, "Select the Steam library folder that contains Spacewar",
+                                steam_root());
+    if (!chosen) return;
+    auto dir = normalize_steam_dir(*chosen);
+    if (!dir || !library_has_spacewar(*dir)) {
+        show_error(this, "Spacewar (App 480) wasn't found in that folder.\n"
+                         "Pick the Steam library folder that contains "
+                         "steamapps/appmanifest_480.acf.");
+        return;
+    }
+    log_info("Steam library changed to {}", dir->string());
+    save_steam_library(*dir);
+    refresh_after_steam_change();
 }
 
 void MonkeyLauncher::on_proton_changed() {

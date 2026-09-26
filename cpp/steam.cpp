@@ -18,12 +18,35 @@ std::vector<fs::path> get_steam_libs() {
     std::vector<fs::path> libs;
     const fs::path vdf = steam_root() / "steamapps" / "libraryfolders.vdf";
     std::error_code ec;
-    if (!fs::exists(vdf, ec)) return libs;
-    const std::string text = read_text_file(vdf);
-    static const std::regex re("\"path\"\\s+\"([^\"]+)\"");
-    for (std::sregex_iterator it(text.begin(), text.end(), re), end; it != end; ++it)
-        libs.emplace_back((*it)[1].str());
+    if (fs::exists(vdf, ec)) {
+        const std::string text = read_text_file(vdf);
+        static const std::regex re("\"path\"\\s+\"([^\"]+)\"");
+        for (std::sregex_iterator it(text.begin(), text.end(), re), end; it != end; ++it)
+            libs.emplace_back((*it)[1].str());
+    }
+    const std::string extra = read_config(config_file()).get("STEAM_LIBRARY");
+    if (!extra.empty() && std::find(libs.begin(), libs.end(), fs::path(extra)) == libs.end())
+        libs.emplace_back(extra);
     return libs;
+}
+
+void save_steam_library(const fs::path& dir) {
+    Config cfg = read_config(config_file());
+    cfg.set("STEAM_LIBRARY", dir.string());
+    write_config(config_file(), cfg);
+}
+
+void clear_steam_library() {
+    Config cfg = read_config(config_file());
+    cfg.erase("STEAM_LIBRARY");
+    write_config(config_file(), cfg);
+}
+
+std::string saved_steam_library() { return read_config(config_file()).get("STEAM_LIBRARY"); }
+
+bool library_has_spacewar(const fs::path& lib) {
+    std::error_code ec;
+    return fs::exists(lib / "steamapps" / "appmanifest_480.acf", ec);
 }
 
 std::vector<fs::path> get_proton_dirs() {

@@ -7,7 +7,18 @@
 
 namespace ml {
 
+// Steam library folders (from libraryfolders.vdf), plus the STEAM_LIBRARY
+// folder the user picked, if any.
 std::vector<fs::path> get_steam_libs();
+// Remembers a user-chosen Steam library folder (one that holds
+// steamapps/appmanifest_480.acf) in the config.
+void save_steam_library(const fs::path& dir);
+// Forgets the user-chosen library (back to the libraries Steam reports).
+void clear_steam_library();
+// The library folder the user picked, or empty.
+std::string saved_steam_library();
+// True if steamapps/appmanifest_480.acf exists under `lib`.
+bool library_has_spacewar(const fs::path& lib);
 std::vector<fs::path> get_proton_dirs();
 std::optional<fs::path> get_spacewar_dir();
 std::optional<fs::path> find_spacewar_exe();

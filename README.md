@@ -155,7 +155,8 @@ MonkeyLauncher
 1. **Menu → Setup game directory** — point it at your games folder
 2. Select a game from the list, pick a Proton version, hit **Launch**
 3. Optionally set a favorite Proton, per-game env vars, or save directory via **Game Settings**
-4. **Settings → Advanced → Check for Updates** — checks the latest GitHub release; source installs (`install.sh`) can update in place from there, package installs (`.deb`/Arch) are pointed at their package manager instead
+4. If Steam or Spacewar isn't found automatically, MonkeyLauncher asks you to pick the folder at startup; you can change it later in **Settings → Steam**
+5. **Settings → Advanced → Check for Updates** — checks the latest GitHub release; source installs (`install.sh`) can update in place from there, package installs (`.deb`/Arch) are pointed at their package manager instead
 
 </details>
 
@@ -196,7 +197,7 @@ All config is stored in `~/.config/MonkeyLauncher/`:
 
 ```
 ~/.config/MonkeyLauncher/
-├── config          # global: GAMEDIR, PROTONPATH
+├── config          # global: PROTONPATH, VIEW, STEAM_ROOT / STEAM_LIBRARY (only if you picked them)
 ├── games/          # per-game: LAUNCH_ENV, SAVEDIR
 ├── saves/          # save files, symlinked from the Proton prefix
 ├── covers/         # cached cover art (GUI Preview view)

@@ -46,13 +46,22 @@ const fs::path& log_dir()       { static const fs::path p = config_dir() / "logs
 const fs::path& log_file()      { static const fs::path p = log_dir() / "monkeylauncher.log"; return p; }
 const fs::path& covers_dir()    { static const fs::path p = config_dir() / "covers";   return p; }
 
-// Locates the real Steam install dir. This varies by distro/packaging:
-// Arch puts it straight at ~/.local/share/Steam, while the official Debian/
-// Ubuntu package installs to ~/.steam/debian-installation instead. Steam
-// itself maintains ~/.steam/root and ~/.steam/steam as symlinks to wherever
-// it actually lives (the same symlink Proton resolves for
-// STEAM_COMPAT_CLIENT_INSTALL_PATH), so prefer those over guessing.
+static bool has_steamapps(const fs::path& p) {
+    std::error_code ec;
+    return !p.empty() && fs::is_directory(p / "steamapps", ec);
+}
+
+// Locates the real Steam install dir. A folder the user picked (STEAM_ROOT in
+// the config) wins. Otherwise this varies by distro/packaging: Arch puts it
+// straight at ~/.local/share/Steam, while the official Debian/Ubuntu package
+// installs to ~/.steam/debian-installation instead. Steam itself maintains
+// ~/.steam/root and ~/.steam/steam as symlinks to wherever it actually lives
+// (the same symlink Proton resolves for STEAM_COMPAT_CLIENT_INSTALL_PATH), so
+// prefer those over guessing.
 static fs::path detect_steam_root() {
+    const std::string saved = read_config(config_file()).get("STEAM_ROOT");
+    if (!saved.empty() && has_steamapps(saved)) return saved;
+
     const fs::path home = home_dir();
     const std::vector<fs::path> candidates = {
         home / ".steam" / "root",
@@ -63,20 +72,58 @@ static fs::path detect_steam_root() {
         home / ".var" / "app" / "com.valvesoftware.Steam" / "data" / "Steam",
         home / "snap" / "steam" / "common" / ".local" / "share" / "Steam",
     };
-    std::error_code ec;
     for (const auto& c : candidates)
-        if (fs::is_directory(c / "steamapps", ec)) return c;
+        if (has_steamapps(c)) return c;
     return home / ".local" / "share" / "Steam";
 }
 
-const fs::path& steam_root() {
-    static const fs::path p = detect_steam_root();
+namespace {
+struct SteamPaths {
+    fs::path root, prefix;
+    void resolve() {
+        root   = detect_steam_root();
+        prefix = root / "steamapps" / "compatdata" / "480";
+    }
+};
+SteamPaths& steam_paths() {
+    static SteamPaths p = [] { SteamPaths x; x.resolve(); return x; }();
     return p;
 }
+}  // namespace
 
-const fs::path& wineprefix_path() {
-    static const fs::path p = steam_root() / "steamapps" / "compatdata" / "480";
-    return p;
+const fs::path& steam_root()      { return steam_paths().root; }
+const fs::path& wineprefix_path() { return steam_paths().prefix; }
+bool steam_root_found()           { return has_steamapps(steam_root()); }
+void reload_steam_paths()         { steam_paths().resolve(); }
+
+std::optional<fs::path> normalize_steam_dir(const fs::path& chosen) {
+    fs::path c = chosen;
+    if (c.filename().empty()) c = c.parent_path();          // strip a trailing '/'
+    if (has_steamapps(c)) return c;
+    if (c.filename() == "steamapps") {
+        std::error_code ec;
+        if (fs::is_directory(c, ec)) return c.parent_path();
+    }
+    return std::nullopt;
+}
+
+bool steam_root_is_custom() {
+    const std::string saved = read_config(config_file()).get("STEAM_ROOT");
+    return !saved.empty() && has_steamapps(saved);
+}
+
+void clear_steam_root() {
+    Config cfg = read_config(config_file());
+    cfg.erase("STEAM_ROOT");
+    write_config(config_file(), cfg);
+    reload_steam_paths();
+}
+
+void save_steam_root(const fs::path& dir) {
+    Config cfg = read_config(config_file());
+    cfg.set("STEAM_ROOT", dir.string());
+    write_config(config_file(), cfg);
+    reload_steam_paths();
 }
 
 static const std::set<std::string> EXCLUDE_DIRS = {"_CommonRedist", "Binaries"};

@@ -2,7 +2,10 @@
 #include <gtkmm.h>
 
 #include <functional>
+#include <optional>
 #include <string>
+
+#include "common.hpp"
 
 namespace ml {
 
@@ -32,5 +35,9 @@ void show_error(Gtk::Window* parent, const std::string& msg);
 // returns the response id.
 int run_message(Gtk::Window* parent, Gtk::MessageType type, Gtk::ButtonsType buttons,
                 const Glib::ustring& text, const Glib::ustring& secondary = "");
+
+// Select-folder dialog starting at `start`; nullopt if cancelled.
+std::optional<fs::path> choose_folder(Gtk::Window* parent, const Glib::ustring& title,
+                                      const fs::path& start);
 
 }  // namespace ml
