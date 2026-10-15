@@ -33,6 +33,10 @@ options=('!debug')
 # No source= array: this PKGBUILD builds directly from the monorepo checkout
 # it ships in (packaging/arch/PKGBUILD), not from a downloaded tarball.
 build() {
+  # The packager's makepkg.conf may carry -march=native (CachyOS does),
+  # which would tie the binary to the build machine's CPU (e.g. AVX-512).
+  # The last -march on the command line wins, so force a generic target.
+  export CXXFLAGS="$CXXFLAGS -march=x86-64 -mtune=generic"
   make -C "$startdir/../.."
 }
 
